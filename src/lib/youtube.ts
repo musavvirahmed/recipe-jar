@@ -1,5 +1,10 @@
 import { parseIngredientLine } from './quantity'
-import { INGREDIENTS_HEADER, parseRecipeText, STEPS_HEADER } from './textparse'
+import {
+  isIngredientsHeader,
+  isStepsHeader,
+  normalizeHeaderCandidate,
+  parseRecipeText,
+} from './textparse'
 import type { Recipe } from './types'
 
 const YOUTUBE_VIDEO_ID = /^[a-zA-Z0-9_-]{11}$/
@@ -100,18 +105,46 @@ const DESCRIPTION_FOOTER_NOISE = [
   /^link in bio\b/i,
   /^thanks for watching\b/i,
   /^see you (?:next|in)\b/i,
-  /^(?:#\w[\w-]*)(?:\s+#\w[\w-]*)+$/, // "#cooking #salmon …"
-  /^#\w[\w-]*$/, // lone hashtag
+  // ASCII or Unicode tags: "#cooking #kabsa", "#طبخ #كبسة_لحم"
+  /^(?:#[\p{L}\p{N}_-]+)(?:\s+#[\p{L}\p{N}_-]+)*$/u,
+  /^[-–—=*_]{2,}$/, // "---" bilingual / section dividers
+  /^(?:serve your|enjoy your)\b/i, // promo closers, not "Serve hot with …"
+  /^enjoy\b/i, // bare "Enjoy 😊" after the method
+  /^perfect for\b/i, // "Perfect for dipping…" promo after the method
+  /^(?:قدّم|استمتع)\b/,
+  /^join the conversation\b/i,
+  /^where are you watching\b/i,
+  /\blike and subscribe\b/i,
+  /^don['’]?t forget to\b/i,
 ]
 
 function isYieldOnlyLine(line: string): boolean {
   return YIELD_ONLY_LINE.test(line.trim())
 }
 
+/** SEO trailers like "viral bars 🍫 #recipe #chocolate #dessert #shorts". */
+function isHashtagHeavy(line: string): boolean {
+  const tags = line.match(/#[\p{L}\p{N}_-]+/gu)
+  return (tags?.length ?? 0) >= 3
+}
+
 function isDescriptionFooterNoise(line: string): boolean {
   const t = line.trim()
   if (!t) return true
-  return DESCRIPTION_FOOTER_NOISE.some((re) => re.test(t))
+  if (isHashtagHeavy(t)) return true
+  const bare = normalizeHeaderCandidate(t)
+  return DESCRIPTION_FOOTER_NOISE.some((re) => re.test(t) || re.test(bare))
+}
+
+/**
+ * Bare category line with nothing after the colon — "Meat sauce:", "For sautéing:",
+ * "للتقليب:", "Pasta + cheese:". Real ingredients always have content after ":".
+ */
+function isSectionLabel(line: string): boolean {
+  const t = line.trim()
+  if (!/^[^:\n]{1,48}:\s*$/.test(t)) return false
+  if (/^[\d\u0660-\u0669\u06F0-\u06F9½¼¾⅓⅔]/.test(t)) return false
+  return true
 }
 
 /**
@@ -122,7 +155,7 @@ function isDescriptionFooterNoise(line: string): boolean {
  */
 function normalizeDescriptionForParsing(description: string): string {
   let text = description.replace(
-    /^(\s*(?:ingredients|ingredienser|zutaten|ingr[eé]dients|you will need|shopping list))\s*:\s*(.+)$/gim,
+    /^(\s*(?:ingredients|ingredienser|zutaten|ingr[eé]dients|you will need|shopping list|المكونات|المقادير))\s*:\s*(.+)$/gim,
     (_match, header: string, rest: string) => {
       const trimmedRest = rest.trim()
       // Keep yield notes in the document for servings detection, but above the
@@ -132,18 +165,89 @@ function normalizeDescriptionForParsing(description: string): string {
     },
   )
   text = text.replace(
-    /^(\s*(?:method|methods|instructions?|directions?|steps|preparation|g[öo]r s[åa] h[äa]r|instruktioner|tillagning|s[åa] h[äa]r g[öo]r du))\s*:\s*(.+)$/gim,
+    /^(\s*(?:method|methods|instructions?|directions?|cooking\s+steps|steps|preparation|recipe|rezept|how to (?:make|cook|prepare)(?:\s+it)?|g[öo]r s[åa] h[äa]r|instruktioner|tillagning|s[åa] h[äa]r g[öo]r du|طريقة التحضير|طريقة الإعداد|الطريقة))\s*:\s*(.+)$/gim,
     (_match, header: string, rest: string) => `${header.trim()}\n${rest.trim()}`,
   )
   return text
 }
 
+/** "Beef: 2 lbs" / "Baking Soda: 1.5 tsp" → amount-first for quantity parsing. */
+const LABEL_QTY_LEAD =
+  /^(?:\d|½|¼|¾|⅓|⅔|⅛|a\s|an\s|one\s|two\s|three\s|half\b|pinch|dash|handful|few\b)/i
+
+function normalizeLabeledIngredient(line: string): string {
+  const m = line.match(/^([^:]+):\s+(.+)$/)
+  if (!m) return line
+  const name = m[1]!.trim()
+  const rest = m[2]!.trim()
+  if (name.length > 40 || !LABEL_QTY_LEAD.test(rest)) return line
+  // Keep category packs: "The Base: 1 onion, 1–2 tbsp oil"
+  if (/,\s*(?:\d|½|¼|¾|a\s|an\s|one\s|two\s)/i.test(rest)) return line
+  if (/^(?:the|for|whole|additional)\b/i.test(name)) return line
+  return `${rest} ${name}`
+}
+
+/** Merge "Prepare the pot:" + following body into one step. */
+function mergeTitledSteps(lines: string[]): string[] {
+  const out: string[] = []
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!
+    const next = lines[i + 1]
+    const titleLike =
+      /:$/.test(line) &&
+      line.length <= 80 &&
+      !!next &&
+      !/:$/.test(next) &&
+      !isDescriptionFooterNoise(next) &&
+      !isSectionLabel(next)
+    if (titleLike) {
+      out.push(`${line} ${next}`)
+      i++
+      continue
+    }
+    out.push(line)
+  }
+  return out
+}
+
 function cleanIngredientLines(lines: string[]): string[] {
-  return lines.filter((l) => !isYieldOnlyLine(l) && !isDescriptionFooterNoise(l))
+  return lines
+    .filter((l) => !isYieldOnlyLine(l) && !isDescriptionFooterNoise(l) && !isSectionLabel(l))
+    .map(normalizeLabeledIngredient)
+}
+
+/**
+ * Shorts often dump the whole method as one paragraph. Split on sentence
+ * boundaries so each imperative becomes its own step. Trailing emoji after
+ * "enjoy!" stays on that step rather than becoming its own.
+ */
+function splitProseInstructions(line: string): string[] {
+  const trimmed = line.trim()
+  if (trimmed.length < 80) return [trimmed]
+  const parts = trimmed
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+  if (parts.length < 2) return [trimmed]
+
+  const out: string[] = []
+  for (const part of parts) {
+    if (out.length && /^[\p{Extended_Pictographic}\uFE0F\u200D\s]+$/u.test(part)) {
+      out[out.length - 1] = `${out[out.length - 1]} ${part}`.trim()
+    } else {
+      out.push(part)
+    }
+  }
+  return out
 }
 
 function cleanStepLines(lines: string[]): string[] {
-  return lines.filter((l) => !isDescriptionFooterNoise(l) && !isYieldOnlyLine(l))
+  const merged = mergeTitledSteps(
+    lines.filter((l) => !isDescriptionFooterNoise(l) && !isYieldOnlyLine(l)),
+  )
+  // Only expand the "one giant paragraph" case — leave numbered multi-step lists alone.
+  if (merged.length === 1) return splitProseInstructions(merged[0]!)
+  return merged
 }
 
 function descriptionHasRecipeStructure(normalizedDescription: string): boolean {
@@ -154,8 +258,8 @@ function descriptionHasRecipeStructure(normalizedDescription: string): boolean {
   let hasIngredientsHeader = false
   let hasStepsHeader = false
   for (const line of lines) {
-    if (INGREDIENTS_HEADER.test(line)) hasIngredientsHeader = true
-    if (STEPS_HEADER.test(line)) hasStepsHeader = true
+    if (isIngredientsHeader(line)) hasIngredientsHeader = true
+    if (isStepsHeader(line)) hasStepsHeader = true
   }
   return hasIngredientsHeader && hasStepsHeader
 }
