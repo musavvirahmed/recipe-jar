@@ -87,17 +87,63 @@ function extractYtInitialPlayerResponseJson(html: string): string | null {
   return null
 }
 
-/** Creators often write "Ingredients: …" / "Directions: …" on one line; textparse needs header lines. */
+/** Yield / batch note that often sits on the Ingredients: line, not a food item. */
+const YIELD_ONLY_LINE =
+  /^(?:this\s+)?(?:makes|serves|yield(?:s)?)\s+\d[\d\s/-]*(?:\s*(?:meals?|servings?|portions?|people|personer))?\s*$/i
+
+/** Social / promo footer lines that trail many cooking Shorts descriptions. */
+const DESCRIPTION_FOOTER_NOISE = [
+  /^follow\b/i,
+  /^subscribe\b/i,
+  /^like\s+(?:and|&)\s+subscribe\b/i,
+  /cookbook in bio/i,
+  /^link in bio\b/i,
+  /^thanks for watching\b/i,
+  /^see you (?:next|in)\b/i,
+  /^(?:#\w[\w-]*)(?:\s+#\w[\w-]*)+$/, // "#cooking #salmon …"
+  /^#\w[\w-]*$/, // lone hashtag
+]
+
+function isYieldOnlyLine(line: string): boolean {
+  return YIELD_ONLY_LINE.test(line.trim())
+}
+
+function isDescriptionFooterNoise(line: string): boolean {
+  const t = line.trim()
+  if (!t) return true
+  return DESCRIPTION_FOOTER_NOISE.some((re) => re.test(t))
+}
+
+/**
+ * Creators often write "Ingredients: …" / "Directions: …" on one line; textparse
+ * needs bare header lines. If the rest of an Ingredients: line is only a yield
+ * note ("this makes 6 meals"), keep the header alone — servings still come from
+ * detectServings on the full description.
+ */
 function normalizeDescriptionForParsing(description: string): string {
   let text = description.replace(
     /^(\s*(?:ingredients|ingredienser|zutaten|ingr[eé]dients|you will need|shopping list))\s*:\s*(.+)$/gim,
-    (_, header, rest) => `${header.trim()}\n${rest.trim()}`,
+    (_match, header: string, rest: string) => {
+      const trimmedRest = rest.trim()
+      // Keep yield notes in the document for servings detection, but above the
+      // Ingredients header so they are not collected as ingredient lines.
+      if (isYieldOnlyLine(trimmedRest)) return `${trimmedRest}\n\n${header.trim()}`
+      return `${header.trim()}\n${trimmedRest}`
+    },
   )
   text = text.replace(
     /^(\s*(?:method|methods|instructions?|directions?|steps|preparation|g[öo]r s[åa] h[äa]r|instruktioner|tillagning|s[åa] h[äa]r g[öo]r du))\s*:\s*(.+)$/gim,
-    (_, header, rest) => `${header.trim()}\n${rest.trim()}`,
+    (_match, header: string, rest: string) => `${header.trim()}\n${rest.trim()}`,
   )
   return text
+}
+
+function cleanIngredientLines(lines: string[]): string[] {
+  return lines.filter((l) => !isYieldOnlyLine(l) && !isDescriptionFooterNoise(l))
+}
+
+function cleanStepLines(lines: string[]): string[] {
+  return lines.filter((l) => !isDescriptionFooterNoise(l) && !isYieldOnlyLine(l))
 }
 
 function descriptionHasRecipeStructure(normalizedDescription: string): boolean {
@@ -146,8 +192,12 @@ export function tryParseYouTubeRecipe(html: string, sourceUrl: string): Recipe |
   if (!descriptionHasRecipeStructure(normalizedDescription)) return null
 
   const parsed = parseRecipeText(normalizedDescription)
-  const ingredientLines = parsed.ingredients.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
-  const stepLines = parsed.steps.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+  const ingredientLines = cleanIngredientLines(
+    parsed.ingredients.split(/\r?\n/).map((l) => l.trim()).filter(Boolean),
+  )
+  const stepLines = cleanStepLines(
+    parsed.steps.split(/\r?\n/).map((l) => l.trim()).filter(Boolean),
+  )
 
   if (ingredientLines.length < 2 || stepLines.length < 1) return null
 

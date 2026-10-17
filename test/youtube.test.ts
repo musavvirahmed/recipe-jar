@@ -89,9 +89,14 @@ describe('tryParseYouTubeRecipe', () => {
     expect(recipe).not.toBeNull()
     expect(recipe!.title).toMatch(/Salmon/i)
     expect(recipe!.ingredients.length).toBeGreaterThanOrEqual(8)
-    expect(recipe!.steps.length).toBeGreaterThanOrEqual(4)
+    expect(recipe!.steps.length).toBe(6)
     expect(recipe!.servings).toBe(6)
     expect(recipe!.sourceUrl).toBe('https://www.youtube.com/watch?v=V4i77gmd-vI')
+    // Yield / CTA / hashtag footer must not pollute the card
+    expect(recipe!.ingredients.map((i) => i.raw)).not.toContain('this makes 6 meals')
+    expect(recipe!.ingredients[0]?.raw).toMatch(/sockeye salmon/i)
+    expect(recipe!.steps.some((s) => /follow for more/i.test(s))).toBe(false)
+    expect(recipe!.steps.some((s) => /#cooking/i.test(s))).toBe(false)
   })
 
   it('rejects a YouTube page whose description is not a recipe', () => {
