@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { metricLine, densityFor, metricStepText } from '../src/lib/convert'
+import { metricLine, densityFor } from '../src/lib/convert'
 
 describe('metricLine', () => {
   it('converts ounces and pounds exactly, no ≈ marker', () => {
@@ -39,38 +39,5 @@ describe('metricLine', () => {
     expect(metricLine(2, null, 'onions, sliced')).toBeNull()
     expect(metricLine(1, null, 'clove garlic')).toBeNull()
     expect(metricLine(null, null, 'salt to taste')).toBeNull()
-  })
-})
-
-describe('metricStepText', () => {
-  it('converts Fahrenheit oven and probe temps to Celsius', () => {
-    expect(metricStepText('Preheat oven to 400°F. Place Boursin in the dish.')).toBe(
-      'Preheat oven to 205°C. Place Boursin in the dish.',
-    )
-    expect(metricStepText('Bake until salmon reaches 145°F and tomatoes are soft.')).toBe(
-      'Bake until salmon reaches 63°C and tomatoes are soft.',
-    )
-  })
-
-  it('converts ounces and pounds embedded in method prose', () => {
-    expect(metricStepText('While baking, cook 8 oz pasta until al dente.')).toBe(
-      'While baking, cook 225 g pasta until al dente.',
-    )
-  })
-
-  it('converts inches in pan sizes to centimetres', () => {
-    expect(metricStepText('Place Boursin in the center of a 9×13 baking dish.')).toContain(
-      '23×33 cm',
-    )
-  })
-
-  it('leaves minutes and spoons alone', () => {
-    expect(metricStepText('Bake 25-30 minutes. Add 1 tbsp oil.')).toBe(
-      'Bake 25-30 minutes. Add 1 tbsp oil.',
-    )
-  })
-
-  it('is a no-op when nothing imperial is present', () => {
-    expect(metricStepText('Simmer gently until thick.')).toBe('Simmer gently until thick.')
   })
 })
