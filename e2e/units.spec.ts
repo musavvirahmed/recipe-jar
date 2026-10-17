@@ -17,7 +17,7 @@ test.beforeEach(async ({ page }) => {
   await page.getByRole('button', { name: /type in one of your own/i }).click()
   await page.getByLabel('Recipe name').fill('Metric Cake')
   await page.getByLabel(/Ingredients/).fill('1 cup flour\n8 oz cream cheese\n1 tsp vanilla\n1 cup chopped celery')
-  await page.getByLabel(/Steps/).fill('Mix.\nBake.')
+  await page.getByLabel(/Steps/).fill('Mix.\nBake at 350°F until golden.')
   await page.getByRole('button', { name: 'Create recipe' }).click()
   await expect(page.getByText('✓ In your jar')).toBeVisible()
 })
@@ -31,12 +31,15 @@ test('the toggle converts known lines, honestly marks densities, and persists', 
   await expect(page.getByText('240 ml chopped celery')).toBeVisible()
   // Spoons stay spoons.
   await expect(page.getByText('1 tsp vanilla')).toBeVisible()
+  // Method text metrifies temperatures too.
+  await expect(page.getByText(/Bake at 175°C until golden/)).toBeVisible()
 
   // The choice sticks across a reload (via the deep link back to the card).
   await page.reload()
   await expect(page.getByText('≈ 120 g flour')).toBeVisible()
   await page.getByRole('button', { name: /⇄ original units/ }).click()
   await expect(page.getByText('1 cup flour')).toBeVisible()
+  await expect(page.getByText(/Bake at 350°F until golden/)).toBeVisible()
 })
 
 test('cook mode sheet converts; the shopping list never does', async ({ page }) => {

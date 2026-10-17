@@ -155,9 +155,10 @@
       }
     })(),
   )
-  let convertMod = $state<{ metricLine: (q: number | null, e: number | null, rest: string) => string | null } | null>(
-    null,
-  )
+  let convertMod = $state<{
+    metricLine: (q: number | null, e: number | null, rest: string) => string | null
+    metricStepText: (text: string) => string
+  } | null>(null)
   $effect(() => {
     if (units === 'metric' && convertMod === null) {
       void import('../convert').then((m) => (convertMod = m))
@@ -171,9 +172,13 @@
   }
   // The toggle only appears when the card has something it can convert:
   // an all-metric recipe (grams and spoons) would make it a dead button,
-  // which reads as broken. Cheap check, mirrors convert.ts's scope.
+  // which reads as broken. Cheap check, mirrors convert.ts's scope — including
+  // imperial amounts / °F / inches that may live only in the method text.
+  const IMPERIAL_HINT =
+    /(^|\s)(cups?|oz|ounces?|lbs?|pounds?)(\s|\.|$)|°\s*F\b|\d\s*F(?:ahrenheit)?\b|\d\s*[×x]\s*\d|(?:inches|inch|in\.)\b/i
   const convertible = $derived(
-    recipe.ingredients.some((i) => /(^|\s)(cups?|oz|ounces?|lbs?|pounds?)(\s|\.|$)/i.test(i.raw)),
+    recipe.ingredients.some((i) => IMPERIAL_HINT.test(i.raw)) ||
+      recipe.steps.some((s) => IMPERIAL_HINT.test(s)),
   )
 
   /** What the card and cook sheet render: metric when asked and known. */
@@ -184,6 +189,12 @@
       if (metric) return metric
     }
     return scaledLine(ing)
+  }
+
+  /** Method steps: metric rewrite of temperatures and imperial amounts in prose. */
+  function displayStep(text: string): string {
+    if (units === 'metric' && convertMod) return convertMod.metricStepText(text)
+    return text
   }
 
   // Ingredient lines, scaled to the chosen servings, for the shopping list.
@@ -706,7 +717,7 @@
           <p class="cook-section">{cookList[stepIndex].section}</p>
         {/if}
         {#key stepIndex}
-          <p class="cook-step" style="--stepdx:{stepDir * 14}px">{cookList[stepIndex].text}</p>
+          <p class="cook-step" style="--stepdx:{stepDir * 14}px">{displayStep(cookList[stepIndex].text)}</p>
         {/key}
         {#if stepTimers[cookList[stepIndex].index].length > 0}
           <div class="cook-timers">
@@ -885,7 +896,7 @@
                 <ol class="steps">
                   {#each group.steps as sr (sr.index)}
                     <li>
-                      <span class="step-text">{sr.text}</span>
+                      <span class="step-text">{displayStep(sr.text)}</span>
                       {#each stepTimers[sr.index] as t, j (j)}
                         {@render timerChip(sr.index, j, t)}
                       {/each}

@@ -1,10 +1,11 @@
-// Metric display for ingredient lines: cups and ounces become grams and
-// millilitres, on the card only. Two honesty rules govern everything here:
-// exact unit conversions (oz, lb) carry no marker, while cup-to-grams goes
-// through a curated density table and is marked with ≈ because a cup of
-// flour depends on how you scoop it. Anything the table does not know keeps
-// its cup as exact millilitres, and spoons (tsp/tbsp) are left alone: they
-// are already universal. The shopping list never converts (see mergelist's
+// Metric display for ingredient lines and method steps, on the card / cook
+// mode only. Two honesty rules govern ingredient lines: exact unit conversions
+// (oz, lb) carry no marker, while cup-to-grams goes through a curated density
+// table and is marked with ≈ because a cup of flour depends on how you scoop
+// it. Anything the table does not know keeps its cup as exact millilitres, and
+// spoons (tsp/tbsp) are left alone: they are already universal. Method text
+// gets the same mass/volume honesty where amounts appear in prose, plus exact
+// °F→°C and inch→cm. The shopping list never converts (see mergelist's
 // no-guessing stance); this module is display-only and loads lazily.
 
 import { UNIT_ALIAS_TABLE } from './mergelist'
@@ -124,4 +125,84 @@ export function metricLine(qty: number | null, qtyEnd: number | null, rest: stri
   }
 
   return null
+}
+
+/** °F → °C. Oven-range temps round to the nearest 5°C; lower temps to 1°C. */
+function fahrenheitToCelsiusLabel(f: number): string {
+  const c = ((f - 32) * 5) / 9
+  if (f >= 250) return `${Math.round(c / 5) * 5}°C`
+  return `${Math.round(c)}°C`
+}
+
+function inchesToCmLabel(n: number): string {
+  const cm = n * 2.54
+  if (cm >= 10) return `${Math.round(cm)} cm`
+  return `${(Math.round(cm * 10) / 10).toFixed(1).replace(/\.0$/, '')} cm`
+}
+
+function massFromImperial(qty: number, unitRaw: string): string | null {
+  const unit = UNIT_ALIAS_TABLE[unitRaw.toLowerCase().replace(/\.$/, '')]
+  if (!unit || !(unit in G_PER)) return null
+  return roundG(qty * G_PER[unit])
+}
+
+/**
+ * Display-only metric rewrite of a method step. Leaves minutes and spoons
+ * alone. Temperatures, imperial mass, cups (≈ when density known, else ml),
+ * and inch dimensions are converted in place.
+ */
+export function metricStepText(text: string): string {
+  let out = text
+
+  // 400°F / 400 °F / 400 degrees Fahrenheit
+  out = out.replace(
+    /(\d+(?:\.\d+)?)\s*(?:°\s*)?F(?:ahrenheit)?\b|(\d+(?:\.\d+)?)\s*degrees?\s*F(?:ahrenheit)?\b/gi,
+    (full, a: string | undefined, b: string | undefined) => {
+      const n = parseFloat(a ?? b ?? '')
+      if (!Number.isFinite(n)) return full
+      return fahrenheitToCelsiusLabel(n)
+    },
+  )
+
+  // 9×13 / 9x13 baking dish (inches implied)
+  out = out.replace(
+    /(\d+(?:\.\d+)?)\s*[×x]\s*(\d+(?:\.\d+)?)(?:\s*(?:inches|inch|in\.?))?\b/gi,
+    (full, a: string, b: string) => {
+      const w = parseFloat(a)
+      const h = parseFloat(b)
+      if (!Number.isFinite(w) || !Number.isFinite(h)) return full
+      const left = inchesToCmLabel(w).replace(/ cm$/, '')
+      const right = inchesToCmLabel(h)
+      return `${left}×${right}`
+    },
+  )
+
+  out = out.replace(/(\d+(?:\.\d+)?)\s*(?:inches|inch|in\.)\b/gi, (full, a: string) => {
+    const n = parseFloat(a)
+    if (!Number.isFinite(n)) return full
+    return inchesToCmLabel(n)
+  })
+
+  out = out.replace(
+    /(\d+(?:\.\d+)?)\s*(oz|ounces?|lbs?|pounds?)\b/gi,
+    (full, qtyStr: string, unitRaw: string) => {
+      const qty = parseFloat(qtyStr)
+      if (!Number.isFinite(qty)) return full
+      const mass = massFromImperial(qty, unitRaw)
+      return mass ?? full
+    },
+  )
+
+  out = out.replace(
+    /(\d+(?:\.\d+)?)\s*(cups?)\b(?:\s+of)?\s+([a-z][\w'-]*(?:\s+[a-z][\w'-]*){0,3})/gi,
+    (full, qtyStr: string, _unit: string, item: string) => {
+      const qty = parseFloat(qtyStr)
+      if (!Number.isFinite(qty)) return full
+      const density = densityFor(item)
+      if (density !== null) return `≈ ${roundG(qty * density)} ${item}`
+      return `${roundMl(qty * ML_PER.cup)} ${item}`
+    },
+  )
+
+  return out
 }
