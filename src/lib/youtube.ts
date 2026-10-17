@@ -8,14 +8,11 @@ import {
 import type { Recipe } from './types'
 
 const YOUTUBE_VIDEO_ID = /^[a-zA-Z0-9_-]{11}$/
-
-const YOUTUBE_HOST =
-  /^(?:www\.|m\.)?youtube\.com$|^youtu\.be$/i
+const YOUTUBE_HOST = /^(?:www\.|m\.)?youtube\.com$|^youtu\.be$/i
 
 export function isYouTubeUrl(url: string): boolean {
   try {
-    const parsed = new URL(url)
-    return YOUTUBE_HOST.test(parsed.hostname)
+    return YOUTUBE_HOST.test(new URL(url).hostname)
   } catch {
     return false
   }
@@ -23,30 +20,25 @@ export function isYouTubeUrl(url: string): boolean {
 
 function extractYouTubeVideoId(url: string): string | null {
   if (!isYouTubeUrl(url)) return null
-
   let parsed: URL
   try {
     parsed = new URL(url)
   } catch {
     return null
   }
-
   if (parsed.hostname === 'youtu.be') {
     const id = parsed.pathname.replace(/^\//, '').split('/')[0] ?? ''
     return YOUTUBE_VIDEO_ID.test(id) ? id : null
   }
-
   const pathMatch = parsed.pathname.match(/^\/(shorts|embed|live)\/([^/?#]+)/)
   if (pathMatch) {
     const id = pathMatch[2]
     return YOUTUBE_VIDEO_ID.test(id) ? id : null
   }
-
   if (parsed.pathname === '/watch') {
     const v = parsed.searchParams.get('v')
     if (v && YOUTUBE_VIDEO_ID.test(v)) return v
   }
-
   return null
 }
 
@@ -148,27 +140,22 @@ function isSectionLabel(line: string): boolean {
 }
 
 /**
- * Creators often write "Ingredients: …" / "Directions: …" on one line; textparse
- * needs bare header lines. If the rest of an Ingredients: line is only a yield
- * note ("this makes 6 meals"), keep the header alone — servings still come from
- * detectServings on the full description.
+ * "Ingredients: …" / "Directions: …" on one line. textparse needs the header alone.
+ * A yield note ("this makes 6 meals") stays above the header so it still counts as servings.
  */
 function normalizeDescriptionForParsing(description: string): string {
-  let text = description.replace(
-    /^(\s*(?:ingredients|ingredienser|zutaten|ingr[eé]dients|you will need|shopping list|المكونات|المقادير))\s*:\s*(.+)$/gim,
-    (_match, header: string, rest: string) => {
-      const trimmedRest = rest.trim()
-      // Keep yield notes in the document for servings detection, but above the
-      // Ingredients header so they are not collected as ingredient lines.
-      if (isYieldOnlyLine(trimmedRest)) return `${trimmedRest}\n\n${header.trim()}`
-      return `${header.trim()}\n${trimmedRest}`
-    },
-  )
-  text = text.replace(
-    /^(\s*(?:method|methods|instructions?|directions?|cooking\s+steps|steps|preparation|recipe|rezept|how to (?:make|cook|prepare)(?:\s+it)?|g[öo]r s[åa] h[äa]r|instruktioner|tillagning|s[åa] h[äa]r g[öo]r du|طريقة التحضير|طريقة الإعداد|الطريقة))\s*:\s*(.+)$/gim,
-    (_match, header: string, rest: string) => `${header.trim()}\n${rest.trim()}`,
-  )
-  return text
+  return description
+    .split(/\r?\n/)
+    .map((line) => {
+      const colon = line.indexOf(':')
+      if (colon <= 0) return line
+      const header = line.slice(0, colon).trim()
+      const rest = line.slice(colon + 1).trim()
+      if (!rest || !(isIngredientsHeader(header) || isStepsHeader(header))) return line
+      if (isIngredientsHeader(header) && isYieldOnlyLine(rest)) return `${rest}\n\n${header}`
+      return `${header}\n${rest}`
+    })
+    .join('\n')
 }
 
 /** "Beef: 2 lbs" / "Baking Soda: 1.5 tsp" → amount-first for quantity parsing. */

@@ -53,7 +53,7 @@ describe('extractYouTubeDescription', () => {
 })
 
 describe('parseImportedHtml', () => {
-  it('prefers JSON-LD over YouTube description on a structured page', () => {
+  it('prefers JSON-LD over YouTube description on a structured page', async () => {
     const html = `<!doctype html><html><head>
       <script type="application/ld+json">${JSON.stringify({
         '@context': 'https://schema.org',
@@ -66,19 +66,19 @@ describe('parseImportedHtml', () => {
         videoDetails: { title: 'Wrong', shortDescription: 'not a recipe' },
       })};</script>
       </head><body></body></html>`
-    const r = parseImportedHtml(html, 'https://www.youtube.com/watch?v=abc12345678')
+    const r = await parseImportedHtml(html, 'https://www.youtube.com/watch?v=abc12345678')
     expect(r?.title).toBe('Tomato Soup')
   })
 
-  it('falls back to YouTube description when structured data is missing', () => {
+  it('falls back to YouTube description when structured data is missing', async () => {
     const html = readFileSync('fixtures/youtube-salmon-meal-prep.html', 'utf8')
-    const recipe = parseImportedHtml(html, 'https://www.youtube.com/watch?v=V4i77gmd-vI')
+    const recipe = await parseImportedHtml(html, 'https://www.youtube.com/watch?v=V4i77gmd-vI')
     expect(recipe).not.toBeNull()
     expect(recipe!.title).toMatch(/Salmon/i)
   })
 
-  it('returns null for non-recipe pages', () => {
-    expect(parseImportedHtml('<html><body>hello</body></html>', 'https://example.com/x')).toBeNull()
+  it('returns null for non-recipe pages', async () => {
+    expect(await parseImportedHtml('<html><body>hello</body></html>', 'https://example.com/x')).toBeNull()
   })
 })
 

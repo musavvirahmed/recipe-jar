@@ -1,10 +1,12 @@
 import { parseRecipeFromHtml } from './parse'
-import { isYouTubeUrl, tryParseYouTubeRecipe } from './youtube'
 import type { Recipe } from './types'
 
-export function parseImportedHtml(html: string, sourceUrl: string): Recipe | null {
+export async function parseImportedHtml(html: string, sourceUrl: string): Promise<Recipe | null> {
   const parsed = parseRecipeFromHtml(html, sourceUrl)
   if (parsed) return parsed
-  if (isYouTubeUrl(sourceUrl)) return tryParseYouTubeRecipe(html, sourceUrl)
-  return null
+  // Cheap reject so a normal recipe page never downloads the YouTube parser.
+  if (!/youtu\.?be/i.test(sourceUrl)) return null
+  const { isYouTubeUrl, tryParseYouTubeRecipe } = await import('./youtube')
+  if (!isYouTubeUrl(sourceUrl)) return null
+  return tryParseYouTubeRecipe(html, sourceUrl)
 }

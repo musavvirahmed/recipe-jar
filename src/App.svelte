@@ -2,7 +2,6 @@
   import type { Recipe } from './lib/types'
   import { parseAllRecipesFromHtml, pickBestRecipe } from './lib/parse'
   import { parseImportedHtml } from './lib/importRecipe'
-  import { isYouTubeUrl, normalizeYouTubeWatchUrl } from './lib/youtube'
   import { searchSitesForgiving, type SearchHit } from './lib/sitesearch'
   import {
     saveRecipe,
@@ -479,9 +478,11 @@
     dishQuery = ''
     choices = null
     try {
-      const sourceUrl = isYouTubeUrl(target)
-        ? (normalizeYouTubeWatchUrl(target) ?? target)
-        : target
+      let sourceUrl = target
+      if (/youtu\.?be/i.test(target)) {
+        const { isYouTubeUrl, normalizeYouTubeWatchUrl } = await import('./lib/youtube')
+        if (isYouTubeUrl(target)) sourceUrl = normalizeYouTubeWatchUrl(target) ?? target
+      }
       const res = await fetch(`/api/proxy?url=${encodeURIComponent(sourceUrl)}`)
       if (!res.ok) {
         const body = await res.json().catch(() => ({ error: 'Could not fetch that page' }))
@@ -498,7 +499,7 @@
         return
       }
       // Structured recipe first; YouTube watch pages may fall back to description text.
-      const parsed = parseImportedHtml(html, sourceUrl)
+      const parsed = await parseImportedHtml(html, sourceUrl)
       if (!parsed) {
         blocked = true
         // Fetched fine but no recipe found. Two very different stories, told
