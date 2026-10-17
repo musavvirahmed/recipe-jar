@@ -4,6 +4,7 @@ import {
   extractYouTubeDescription,
   isYouTubeUrl,
   normalizeYouTubeWatchUrl,
+  tryParseYouTubeRecipe,
 } from '../src/lib/youtube'
 
 describe('youtube urls', () => {
@@ -35,5 +36,28 @@ describe('extractYouTubeDescription', () => {
 
   it('returns null when player JSON is missing', () => {
     expect(extractYouTubeDescription('<html><body>nope</body></html>')).toBeNull()
+  })
+})
+
+describe('tryParseYouTubeRecipe', () => {
+  it('builds a recipe from the salmon description fixture', () => {
+    const html = readFileSync('fixtures/youtube-salmon-meal-prep.html', 'utf8')
+    const recipe = tryParseYouTubeRecipe(html, 'https://www.youtube.com/watch?v=V4i77gmd-vI')
+    expect(recipe).not.toBeNull()
+    expect(recipe!.title).toMatch(/Salmon/i)
+    expect(recipe!.ingredients.length).toBeGreaterThanOrEqual(8)
+    expect(recipe!.steps.length).toBeGreaterThanOrEqual(4)
+    expect(recipe!.servings).toBe(6)
+    expect(recipe!.sourceUrl).toBe('https://www.youtube.com/watch?v=V4i77gmd-vI')
+  })
+
+  it('rejects a YouTube page whose description is not a recipe', () => {
+    const html = `<html><script>var ytInitialPlayerResponse = ${JSON.stringify({
+      videoDetails: {
+        title: 'Vlog',
+        shortDescription: 'Cookbook in bio\n\n#cooking',
+      },
+    })};</script></html>`
+    expect(tryParseYouTubeRecipe(html, 'https://www.youtube.com/watch?v=aaaaaaaaaaa')).toBeNull()
   })
 })
