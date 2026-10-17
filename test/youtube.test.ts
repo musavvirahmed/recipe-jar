@@ -23,6 +23,18 @@ describe('youtube urls', () => {
     expect(normalizeYouTubeWatchUrl('https://www.youtube.com/shorts/V4i77gmd-vI')).toBe(
       'https://www.youtube.com/watch?v=V4i77gmd-vI',
     )
+    expect(normalizeYouTubeWatchUrl('https://m.youtube.com/watch?v=V4i77gmd-vI')).toBe(
+      'https://www.youtube.com/watch?v=V4i77gmd-vI',
+    )
+  })
+
+  it('does not normalize non-YouTube hosts that embed a watch link', () => {
+    expect(
+      normalizeYouTubeWatchUrl(
+        'https://example.com/blog?ref=youtube.com/watch?v=abcdefghijk',
+      ),
+    ).toBeNull()
+    expect(normalizeYouTubeWatchUrl('https://notyoutube.com/shorts/abcdefghijk')).toBeNull()
   })
 })
 
@@ -87,6 +99,28 @@ describe('tryParseYouTubeRecipe', () => {
       videoDetails: {
         title: 'Vlog',
         shortDescription: 'Cookbook in bio\n\n#cooking',
+      },
+    })};</script></html>`
+    expect(tryParseYouTubeRecipe(html, 'https://www.youtube.com/watch?v=aaaaaaaaaaa')).toBeNull()
+  })
+
+  it('rejects vlog-style descriptions without recipe headers', () => {
+    const html = `<html><script>var ytInitialPlayerResponse = ${JSON.stringify({
+      videoDetails: {
+        title: 'Weekly vlog',
+        shortDescription:
+          'New vlog out now\nCamera: Sony A7\nMusic: Epidemic Sound\nThanks so much for watching and see you next week.',
+      },
+    })};</script></html>`
+    expect(tryParseYouTubeRecipe(html, 'https://www.youtube.com/watch?v=aaaaaaaaaaa')).toBeNull()
+  })
+
+  it('rejects gear-list descriptions without recipe headers', () => {
+    const html = `<html><script>var ytInitialPlayerResponse = ${JSON.stringify({
+      videoDetails: {
+        title: 'My setup',
+        shortDescription:
+          'Gear I use:\nCamera: Sony A7IV\nLens: 24-70mm\nMic: Rode Wireless\nSubscribe for more!',
       },
     })};</script></html>`
     expect(tryParseYouTubeRecipe(html, 'https://www.youtube.com/watch?v=aaaaaaaaaaa')).toBeNull()

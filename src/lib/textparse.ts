@@ -9,8 +9,10 @@ export interface ParsedText {
   steps: string // newline-joined
 }
 
-const INGREDIENTS_HEADER = /^(ingredients|ingredienser|zutaten|ingr[eé]dients|you will need|shopping list)\b[:\s]*$/i
-const STEPS_HEADER = /^(method|methods|instructions?|directions?|steps|preparation|g[öo]r s[åa] h[äa]r|instruktioner|tillagning|s[åa] h[äa]r g[öo]r du)\b[:\s]*$/i
+export const INGREDIENTS_HEADER =
+  /^(ingredients|ingredienser|zutaten|ingr[eé]dients|you will need|shopping list)\b[:\s]*$/i
+export const STEPS_HEADER =
+  /^(method|methods|instructions?|directions?|steps|preparation|g[öo]r s[åa] h[äa]r|instruktioner|tillagning|s[åa] h[äa]r g[öo]r du)\b[:\s]*$/i
 const NOISE = /^(ingredients|method|instructions|directions|steps|preparation)\b/i
 
 // Lines that are website or app chrome, not recipe content. Dropped before

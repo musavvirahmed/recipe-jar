@@ -1,8 +1,8 @@
 import { parseIngredientLine } from './quantity'
-import { parseRecipeText } from './textparse'
+import { INGREDIENTS_HEADER, parseRecipeText, STEPS_HEADER } from './textparse'
 import type { Recipe } from './types'
 
-const YOUTUBE_VIDEO_ID = /(?:youtube\.com\/(?:watch\?(?:[^&]*&)*v=|shorts\/|embed\/|live\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/
+const YOUTUBE_VIDEO_ID = /^[a-zA-Z0-9_-]{11}$/
 
 const YOUTUBE_HOST =
   /^(?:www\.|m\.)?youtube\.com$|^youtu\.be$/i
@@ -16,10 +16,39 @@ export function isYouTubeUrl(url: string): boolean {
   }
 }
 
+function extractYouTubeVideoId(url: string): string | null {
+  if (!isYouTubeUrl(url)) return null
+
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return null
+  }
+
+  if (parsed.hostname === 'youtu.be') {
+    const id = parsed.pathname.replace(/^\//, '').split('/')[0] ?? ''
+    return YOUTUBE_VIDEO_ID.test(id) ? id : null
+  }
+
+  const pathMatch = parsed.pathname.match(/^\/(shorts|embed|live)\/([^/?#]+)/)
+  if (pathMatch) {
+    const id = pathMatch[2]
+    return YOUTUBE_VIDEO_ID.test(id) ? id : null
+  }
+
+  if (parsed.pathname === '/watch') {
+    const v = parsed.searchParams.get('v')
+    if (v && YOUTUBE_VIDEO_ID.test(v)) return v
+  }
+
+  return null
+}
+
 export function normalizeYouTubeWatchUrl(url: string): string | null {
-  const match = url.match(YOUTUBE_VIDEO_ID)
-  if (!match) return null
-  return `https://www.youtube.com/watch?v=${match[1]}`
+  const id = extractYouTubeVideoId(url)
+  if (!id) return null
+  return `https://www.youtube.com/watch?v=${id}`
 }
 
 function extractYtInitialPlayerResponseJson(html: string): string | null {
@@ -58,12 +87,31 @@ function extractYtInitialPlayerResponseJson(html: string): string | null {
   return null
 }
 
-/** Creators often write "Ingredients: makes 6 meals" on one line; textparse needs a header line. */
+/** Creators often write "Ingredients: …" / "Directions: …" on one line; textparse needs header lines. */
 function normalizeDescriptionForParsing(description: string): string {
-  return description.replace(
+  let text = description.replace(
     /^(\s*(?:ingredients|ingredienser|zutaten|ingr[eé]dients|you will need|shopping list))\s*:\s*(.+)$/gim,
     (_, header, rest) => `${header.trim()}\n${rest.trim()}`,
   )
+  text = text.replace(
+    /^(\s*(?:method|methods|instructions?|directions?|steps|preparation|g[öo]r s[åa] h[äa]r|instruktioner|tillagning|s[åa] h[äa]r g[öo]r du))\s*:\s*(.+)$/gim,
+    (_, header, rest) => `${header.trim()}\n${rest.trim()}`,
+  )
+  return text
+}
+
+function descriptionHasRecipeStructure(normalizedDescription: string): boolean {
+  const lines = normalizedDescription
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+  let hasIngredientsHeader = false
+  let hasStepsHeader = false
+  for (const line of lines) {
+    if (INGREDIENTS_HEADER.test(line)) hasIngredientsHeader = true
+    if (STEPS_HEADER.test(line)) hasStepsHeader = true
+  }
+  return hasIngredientsHeader && hasStepsHeader
 }
 
 export function extractYouTubeDescription(
@@ -94,7 +142,10 @@ export function tryParseYouTubeRecipe(html: string, sourceUrl: string): Recipe |
   const meta = extractYouTubeDescription(html)
   if (!meta) return null
 
-  const parsed = parseRecipeText(normalizeDescriptionForParsing(meta.description))
+  const normalizedDescription = normalizeDescriptionForParsing(meta.description)
+  if (!descriptionHasRecipeStructure(normalizedDescription)) return null
+
+  const parsed = parseRecipeText(normalizedDescription)
   const ingredientLines = parsed.ingredients.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
   const stepLines = parsed.steps.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
 

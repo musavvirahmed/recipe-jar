@@ -2,7 +2,7 @@
   import type { Recipe } from './lib/types'
   import { parseAllRecipesFromHtml, pickBestRecipe } from './lib/parse'
   import { parseImportedHtml } from './lib/importRecipe'
-  import { normalizeYouTubeWatchUrl } from './lib/youtube'
+  import { isYouTubeUrl, normalizeYouTubeWatchUrl } from './lib/youtube'
   import { searchSitesForgiving, type SearchHit } from './lib/sitesearch'
   import {
     saveRecipe,
@@ -479,7 +479,9 @@
     dishQuery = ''
     choices = null
     try {
-      const sourceUrl = normalizeYouTubeWatchUrl(target) ?? target
+      const sourceUrl = isYouTubeUrl(target)
+        ? (normalizeYouTubeWatchUrl(target) ?? target)
+        : target
       const res = await fetch(`/api/proxy?url=${encodeURIComponent(sourceUrl)}`)
       if (!res.ok) {
         const body = await res.json().catch(() => ({ error: 'Could not fetch that page' }))
