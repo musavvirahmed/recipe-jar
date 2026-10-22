@@ -14,7 +14,7 @@
     updateRecipe,
     type SavedRecipe,
   } from './lib/db'
-  import { consumeImportHash } from './lib/bookmarklet'
+  import { consumeImportHash, type ImportResult } from './lib/bookmarklet'
   import { consumeShareHash, decodeShare } from './lib/share'
   import { imageToText } from './lib/ocr'
   import { countEvent, reportParseIssue } from './lib/telemetry'
@@ -285,7 +285,7 @@
   function onLocationChange() {
     const imported = consumeImportHash()
     if (imported) {
-      showImportedRecipe(imported)
+      void handleImportHash(imported)
       return
     }
     const sharedPayload = consumeShareHash()
@@ -310,6 +310,36 @@
     // Belt and braces: never let a stray event stomp an in-flight share decode.
     if (shareDecodePending) return
     applyRoute(parseRoute(location.hash))
+  }
+
+  // The bookmarklet's hash: a recipe when the page had markup; the page's text
+  // when it had none, read the same way a fetched page without markup is and
+  // landed in the editor; otherwise say so. This used to fall through to a
+  // silent home page, which read as the bookmarklet doing nothing.
+  async function handleImportHash(imported: ImportResult) {
+    if (imported.kind === 'recipe') {
+      await showImportedRecipe(imported.recipe)
+      return
+    }
+    if (imported.kind === 'text') {
+      const { rescueFromText } = await import('./lib/rescue')
+      const rescued = rescueFromText(imported.text, imported.title, imported.image)
+      if (rescued) {
+        const existing = await findBySource(imported.url)
+        if (existing) {
+          recipe = existing.recipe
+          savedId = existing.id
+          navigate({ view: 'recipe', id: savedId })
+        } else {
+          reportParseIssue(imported.url, 'text-rescued')
+          goAdd(rescued.text, { url: imported.url, image: rescued.image })
+        }
+        return
+      }
+    }
+    await applyRoute(parseRoute(location.hash))
+    blocked = false
+    errorMsg = 'The bookmarklet found no recipe on that page: no recipe markup, and no ingredients list in its text. You can still type it in or paste the text yourself.'
   }
 
   // A recipe handed over by the bookmarklet (#import=) or a shared link (#recipe=).

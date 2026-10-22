@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { rescueFromHtml, htmlToLines } from '../src/lib/rescue'
+import { rescueFromHtml, rescueFromText, htmlToLines } from '../src/lib/rescue'
 import { parseRecipeText } from '../src/lib/textparse'
 
 // All HTML below is synthetic and hand-authored for these tests (CC0). The
@@ -91,6 +91,33 @@ describe('rescueFromHtml', () => {
   it('returns null when there is a list but no step at all', () => {
     const html = '<html><body><h2>Ingredients</h2><ul><li>1 cup flour</li><li>1 egg</li><li>1 cup milk</li></ul><h3>Related</h3><p>Mix it all.</p></body></html>'
     expect(rescueFromHtml(html)).toBeNull()
+  })
+})
+
+describe('rescueFromText', () => {
+  it('reads the text the bookmarklet lifted from a live page, site name dropped from the title', () => {
+    const text = [
+      'Some intro paragraph about the dish.',
+      'Ingredients:',
+      'Long beans – 200g',
+      'Onion- 1 medium',
+      'Garlic- 8 big cloves',
+      '1. Toast everything in a pan.',
+      'Serve with rice.',
+      'Related',
+      '2 cups of something else',
+    ].join('\n')
+    const r = rescueFromText(text, 'Long Bean Spread – Borboti Bhorta – Some Vegan Blog', 'https://example.com/b.jpg')
+    expect(r).not.toBeNull()
+    expect(r!.title).toBe('Long Bean Spread – Borboti Bhorta')
+    expect(r!.image).toBe('https://example.com/b.jpg')
+    const parsed = parseRecipeText(r!.text)
+    expect(parsed.ingredients.split('\n')).toEqual(['Long beans – 200g', 'Onion- 1 medium', 'Garlic- 8 big cloves'])
+    expect(parsed.steps.split('\n')).toEqual(['Toast everything in a pan.', 'Serve with rice.'])
+  })
+
+  it('returns null for prose with no ingredients block', () => {
+    expect(rescueFromText('We ate a lot.\n2 pastries a day.', 'My trip', null)).toBeNull()
   })
 })
 

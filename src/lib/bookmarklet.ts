@@ -7,7 +7,16 @@ interface ImportPayload {
   t: string // document title (fallback name)
   j: string[] // raw JSON-LD script contents
   i?: string[] // visible ingredient lines (microdata els, or .ingredient-row tables)
+  x?: string // the article's visible text, only when the page had no markup at all
+  m?: string // og:image, with x
 }
+
+/** What an import hash turned out to hold. */
+export type ImportResult =
+  | { kind: 'recipe'; recipe: Recipe }
+  // No markup on the page; its text rides along for the rescue read.
+  | { kind: 'text'; text: string; url: string; title: string; image: string | null }
+  | { kind: 'nothing'; url: string }
 
 // The one canonical home the bookmarklet always opens, so imported recipes land
 // in the same jar no matter which page you dragged the bookmarklet from.
@@ -27,30 +36,43 @@ export function appOrigin(): string {
  * captures the visible ingredient lines (microdata elements, or table rows
  * like Recipeland's) because some sites publish JSON-LD ingredients without
  * amounts; innerText on the live page naturally skips hidden unit variants.
+ * When the page has neither, it sends the article's visible text (capped) and
+ * the og:image instead, so the app can read the recipe out of plain text.
  */
 export function bookmarkletCode(): string {
   // Kept as one line, ES5 only; `APP` is substituted with the canonical origin.
-  const src = `(function(){try{var d=document,q=function(s){return [].map.call(d.querySelectorAll(s),function(e){return (e.innerText||'').slice(0,200)})},j=[].map.call(d.querySelectorAll('script[type=\\"application/ld+json\\"]'),function(e){return e.textContent||''}),i=q('[itemprop~=\\"recipeIngredient\\"],[itemprop~=\\"ingredients\\"]');if(!i.length)i=q('.ingredient-row');var p={u:location.href,t:d.title,j:j,i:i.slice(0,80)};var h=encodeURIComponent(JSON.stringify(p));window.open('APP/#import='+h,'_blank')}catch(e){alert('Recipe Jar: could not read this page.')}})()`
+  const src = `(function(){try{var d=document,q=function(s){return [].map.call(d.querySelectorAll(s),function(e){return (e.innerText||'').slice(0,200)})},j=[].map.call(d.querySelectorAll('script[type=\\"application/ld+json\\"]'),function(e){return e.textContent||''}),i=q('[itemprop~=\\"recipeIngredient\\"],[itemprop~=\\"ingredients\\"]');if(!i.length)i=q('.ingredient-row');var x='',m='';if(!j.length&&!i.length){var a=d.querySelector('article')||d.querySelector('main')||d.body,g=d.querySelector('meta[property=\\"og:image\\"]');x=(a.innerText||'').slice(0,8000);m=g&&g.content||''}var p={u:location.href,t:d.title,j:j,i:i.slice(0,80),x:x,m:m};var h=encodeURIComponent(JSON.stringify(p));window.open('APP/#import='+h,'_blank')}catch(e){alert('Recipe Jar: could not read this page.')}})()`
   return 'javascript:' + src.replace('APP', appOrigin())
 }
 
 const PREFIX = '#import='
 
-/** If the current URL hash carries a bookmarklet payload, parse it into a Recipe. */
-export function consumeImportHash(): Recipe | null {
+/**
+ * If the current URL hash carries a bookmarklet payload, read it: a Recipe
+ * when the page had markup, its text when it had none, or `nothing` so the
+ * app can say so. Null means there was no import hash at all.
+ */
+export function consumeImportHash(): ImportResult | null {
   const hash = location.hash
   if (!hash.startsWith(PREFIX)) return null
   // Clear the hash immediately so a reload doesn't re-import.
   history.replaceState(null, '', location.pathname + location.search)
   try {
     const payload = JSON.parse(decodeURIComponent(hash.slice(PREFIX.length))) as ImportPayload
-    if (!payload || !Array.isArray(payload.j)) return null
+    if (!payload || !Array.isArray(payload.j)) return { kind: 'nothing', url: '' }
+    const url = typeof payload.u === 'string' ? payload.u : ''
+    const title = typeof payload.t === 'string' ? payload.t : ''
     // Old installed bookmarklets have no `i`; behave exactly as before.
     const captured = Array.isArray(payload.i)
       ? payload.i.filter((x): x is string => typeof x === 'string')
       : undefined
-    return parseRecipeFromJsonLdStrings(payload.j, payload.u ?? '', payload.t ?? '', captured)
+    const recipe = parseRecipeFromJsonLdStrings(payload.j, url, title, captured)
+    if (recipe) return { kind: 'recipe', recipe }
+    if (typeof payload.x === 'string' && payload.x.trim()) {
+      return { kind: 'text', text: payload.x, url, title, image: typeof payload.m === 'string' && payload.m ? payload.m : null }
+    }
+    return { kind: 'nothing', url }
   } catch {
-    return null
+    return { kind: 'nothing', url: '' }
   }
 }

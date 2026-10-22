@@ -119,7 +119,23 @@ function pageTitle(html: string): string {
  * was never a recipe still gets the honest "no recipe found".
  */
 export function rescueFromHtml(html: string): Rescued | null {
-  const lines = linesWithEnds(html)
+  return rescueLines(linesWithEnds(html), pageTitle(html), meta(html, 'og:image'))
+}
+
+/**
+ * The same read over text the bookmarklet lifted from the live page (the
+ * article's innerText: line breaks kept, no container ends, site name still
+ * glued to the title).
+ */
+export function rescueFromText(text: string, title: string, image: string | null): Rescued | null {
+  const lines = text
+    .split('\n')
+    .map((l) => l.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+  return rescueLines(lines, title.replace(/\s+/g, ' ').trim().replace(TITLE_SUFFIX, ''), image)
+}
+
+function rescueLines(lines: string[], title: string, image: string | null): Rescued | null {
   const at = lines.findIndex((l) => INGREDIENTS_HEADER.test(l))
   if (at === -1) return null
 
@@ -146,7 +162,6 @@ export function rescueFromHtml(html: string): Rescued | null {
   // "Serves 4" tends to sit just above the list; carry it along for servings.
   const servings = lines.slice(Math.max(0, at - 6), at).find((l) => SERVINGS.test(l) && l.length <= 40)
 
-  const title = pageTitle(html)
   const text = [title, servings, lines[at], ...block].filter((l): l is string => Boolean(l)).join('\n')
-  return { text, title, image: meta(html, 'og:image') }
+  return { text, title, image }
 }
