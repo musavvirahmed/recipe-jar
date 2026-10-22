@@ -12,8 +12,8 @@
 // anything below the current minor is unreachable bytes in the entry bundle.
 // Past notes live in CHANGELOG.md.
 export const WHATS_NEW: Record<string, string[]> = {
-  '1.20.0': [
-    'Every recipe is yours to change now. A new Edit button on saved recipes opens the familiar form with everything filled in: fix a line, halve the salt for good, rewrite a step. Your tags, notes, and cooking history stay put. And once you have cooked a dish twice, the card starts showing your history: every date you made it.',
+  '1.21.0': [
+    'Some blogs type the recipe straight into the page, with no markup for us to read, and those links used to end in "No recipe found". Now the jar reads the page text instead, finds the ingredients and steps, and opens the editor with everything filled in and the link kept. Check it looks right, then save.',
   ],
 }
 

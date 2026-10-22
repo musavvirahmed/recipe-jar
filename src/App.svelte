@@ -222,10 +222,13 @@
     navigate({ view: next })
   }
 
-  // Open the manual-entry form, optionally pre-filled with photo text. Passing no
-  // text (a plain "type your own") clears any leftover OCR so the form is blank.
-  function goAdd(text = '') {
+  // Open the manual-entry form, optionally pre-filled with photo text or text
+  // rescued from a page (then `source` keeps the link and picture). Passing no
+  // text (a plain "type your own") clears any leftover fill so the form is blank.
+  let pendingSource = $state<{ url: string; image: string | null } | null>(null)
+  function goAdd(text = '', source: { url: string; image: string | null } | null = null) {
     pendingPhotoText = text
+    pendingSource = source
     editingId = null
     go('add')
   }
@@ -236,6 +239,7 @@
     if (savedId === null || !recipe) return
     editingId = savedId
     pendingPhotoText = ''
+    pendingSource = null
     go('add')
   }
 
@@ -494,6 +498,27 @@
       }
       const parsed = parseRecipeFromHtml(html, target)
       if (!parsed) {
+        // No recipe markup. The recipe is often still there as plain text (a
+        // table, a list, lines split by <br>), so read it that way and land in
+        // the editor, where the cook checks it before saving: a heuristic read
+        // never gets to pose as a clean card. Lazy: only a failed import pays
+        // for the rescue code.
+        const { rescueFromHtml } = await import('./lib/rescue')
+        const rescued = rescueFromHtml(html)
+        if (rescued) {
+          const existing = await findBySource(target)
+          if (existing) {
+            // Rescued and saved once already: show that copy, not a second one.
+            recipe = existing.recipe
+            savedId = existing.id
+            navigate({ view: 'recipe', id: savedId })
+          } else {
+            reportParseIssue(target, 'text-rescued')
+            goAdd(rescued.text, { url: target, image: rescued.image })
+          }
+          url = ''
+          return
+        }
         blocked = true
         // Fetched fine but no recipe found. Two very different stories, told
         // apart so the failure tally triages itself: a page with recipe
@@ -786,6 +811,7 @@
       oncreate={handleCreate}
       onback={goBack}
       initialText={pendingPhotoText}
+      initialSource={pendingSource}
       editing={editingId !== null ? recipe : null}
     />
   {:else if view === 'import'}

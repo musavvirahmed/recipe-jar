@@ -6,6 +6,32 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Pages with no recipe markup land in the editor, pre-filled.** Some
+  blogs publish the recipe as plain text only (a WordPress table, a list,
+  lines split by `<br>`), with no JSON-LD and no microdata for the parser to
+  read. Those used to end in "No recipe found", and both rescues the error
+  offered failed on them too. Now a failed import reads the page text, finds
+  the ingredients block, and opens the manual-entry form with title,
+  ingredients, steps, the page's picture, and the link kept, with a note
+  saying the text was read rather than imported. A heuristic read never poses
+  as a clean card: the cook checks it, then creates. Pages with no ingredients
+  block (a travel post, a narrative-only recipe) still get the honest error.
+  The rescue code is a 1.3 KB lazy chunk, paid for only by a failed import.
+  (#24)
+
+### Fixed
+
+- Pasted text with an "Ingredients" heading but no "Method" heading put the
+  numbered steps into the ingredients box. The steps now start at the first
+  "1." line. The mirror case (a "Method" heading with the ingredients listed
+  above it, unlabelled) dropped those ingredients; they are kept now. A
+  "Recipe: Dal Tadka" title line loses its label.
+- Parse-failure telemetry gains a `text-rescued` reason, so the dashboard
+  can tell real recipe blogs without markup from pages that were never
+  recipes (both used to count as `no-recipe`).
+
 ## [1.20.1] - 2026-08-24
 
 ### Fixed
