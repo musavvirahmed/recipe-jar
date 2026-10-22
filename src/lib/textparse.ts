@@ -9,9 +9,15 @@ export interface ParsedText {
   steps: string // newline-joined
 }
 
-const INGREDIENTS_HEADER = /^(ingredients|ingredienser|zutaten|ingr[eé]dients|you will need|shopping list)\b[:\s]*$/i
+// Exported for the page-text rescue (rescue.ts), which anchors on the same
+// header so a page and a paste are read by one set of rules.
+export const INGREDIENTS_HEADER = /^(ingredients|ingredienser|zutaten|ingr[eé]dients|you will need|shopping list)\b[:\s]*$/i
 const STEPS_HEADER = /^(method|methods|instructions?|directions?|steps|preparation|g[öo]r s[åa] h[äa]r|instruktioner|tillagning|s[åa] h[äa]r g[öo]r du)\b[:\s]*$/i
 const NOISE = /^(ingredients|method|instructions|directions|steps|preparation)\b/i
+// A "Serves 4" / "Yield: 12" line is metadata, never an ingredient.
+const SERVINGS_LINE = /^(serves|servings|yield|makes|portions?|portioner)\b/i
+// "Recipe: Dal Tadka" as a title line: the label is the page's, not the dish's.
+const TITLE_LABEL = /^recipe\s*[:\-–]\s*/i
 
 // Lines that are website or app chrome, not recipe content. Dropped before
 // parsing so an OCR'd or pasted page does not turn nav, ratings and badges into
@@ -37,6 +43,8 @@ function isChrome(line: string): boolean {
 
 // Leading list bullets and checkbox glyphs.
 const BULLET = /^\s*(?:[-*•·▢□☐●▪]|\d+[.)])\s+/
+// "1. " / "2) ": a numbered step line.
+const NUMBERED = /^\s*\d+[.)]\s+/
 
 // A measurement-ish token at the start suggests an ingredient line.
 const MEASURE = /^\s*(?:\d|½|¼|¾|⅓|⅔|⅛|a\s|an\s|one\s|two\s|three\s|pinch|dash|handful|clove|tsp|tbsp|cup|g\b|kg|ml|dl|l\b|oz|lb)/i
@@ -52,7 +60,7 @@ function detectServings(text: string): string {
   return m ? m[1] : ''
 }
 
-function looksLikeIngredient(line: string): boolean {
+export function looksLikeIngredient(line: string): boolean {
   const l = line.trim()
   if (!l) return false
   if (MEASURE.test(l)) return true
@@ -87,9 +95,21 @@ export function parseRecipeText(text: string): ParsedText {
 
     const ingEnd = stepIdx > ingIdx ? stepIdx : lines.length
     if (ingIdx !== -1) {
+      // With no steps header, the ingredient list runs to the end of the text,
+      // so a "1. Toast the chili" line is where the method starts: from there
+      // on, every line is a step (a WordPress recipe table reads like this).
+      let inSteps = false
       for (const l of lines.slice(ingIdx + 1, ingEnd)) {
         if (STEPS_HEADER.test(l) || INGREDIENTS_HEADER.test(l)) continue
-        ingredients.push(stripBullet(l))
+        if (stepIdx === -1 && !inSteps && ingredients.length > 0 && NUMBERED.test(l)) inSteps = true
+        ;(inSteps ? steps : ingredients).push(stripBullet(l))
+      }
+    } else {
+      // A steps header with no ingredients header: the measure-looking lines
+      // between the title and the header are the ingredients, not padding.
+      for (const l of lines.slice(0, stepIdx)) {
+        if (l === title || NOISE.test(l) || SERVINGS_LINE.test(l)) continue
+        if (looksLikeIngredient(l)) ingredients.push(stripBullet(l))
       }
     }
     if (stepIdx !== -1) {
@@ -102,7 +122,7 @@ export function parseRecipeText(text: string): ParsedText {
     // No headers: classify line by line. First line is the title.
     title = lines[0] ?? ''
     for (const l of lines.slice(1)) {
-      const isNumbered = /^\s*\d+[.)]\s+/.test(l)
+      const isNumbered = NUMBERED.test(l)
       if (isNumbered) steps.push(stripBullet(l))
       else if (looksLikeIngredient(l)) ingredients.push(stripBullet(l))
       else steps.push(stripBullet(l))
@@ -110,7 +130,7 @@ export function parseRecipeText(text: string): ParsedText {
   }
 
   return {
-    title: title.trim(),
+    title: title.replace(TITLE_LABEL, '').trim(),
     servings,
     ingredients: ingredients.filter(Boolean).join('\n'),
     steps: steps.filter(Boolean).join('\n'),

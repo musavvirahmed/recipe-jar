@@ -28,6 +28,48 @@ describe('parseRecipeText — header-driven', () => {
     expect(r.ingredients.split('\n')).toEqual(['3 dl mjöl', '2 ägg'])
     expect(r.steps).toBe('Vispa ihop.')
   })
+
+  // A WordPress recipe table: an "Ingredients:" cell, then numbered steps in
+  // the next cell with no "Method" heading between them (veganbangla.com).
+  it('starts the steps at the first numbered line when there is no steps header', () => {
+    const text = [
+      'Recipe: Borboti bhorta / Long Bean Spread',
+      'Ingredients:',
+      'Long beans – 200g',
+      'Onion- 1 medium',
+      'Garlic- 8-9 big cloves',
+      'Oil',
+      'Salt',
+      '1. Lightly toast the chili, onion and garlic in a pan. Keep them aside.',
+      '2. Cut the beans into small pieces.',
+      'Serve with white rice.',
+    ].join('\n')
+    const r = parseRecipeText(text)
+    expect(r.title).toBe('Borboti bhorta / Long Bean Spread')
+    expect(r.ingredients.split('\n')).toEqual(['Long beans – 200g', 'Onion- 1 medium', 'Garlic- 8-9 big cloves', 'Oil', 'Salt'])
+    expect(r.steps.split('\n')).toEqual([
+      'Lightly toast the chili, onion and garlic in a pan. Keep them aside.',
+      'Cut the beans into small pieces.',
+      'Serve with white rice.',
+    ])
+  })
+
+  it('keeps a numbered ingredient from starting the steps early', () => {
+    // "1 onion" is a measure, not a step number: no dot or bracket after it.
+    const text = ['Soup', 'Ingredients', '1 onion', '2 carrots', '1. Chop everything.', '2. Simmer.'].join('\n')
+    const r = parseRecipeText(text)
+    expect(r.ingredients.split('\n')).toEqual(['1 onion', '2 carrots'])
+    expect(r.steps.split('\n')).toEqual(['Chop everything.', 'Simmer.'])
+  })
+
+  it('reads the lines above a lone steps header as ingredients', () => {
+    const text = ['Quick Dal', 'Serves 4', '1 cup red lentils', '1 tsp turmeric', 'Method', 'Rinse the lentils.', 'Boil for 20 minutes.'].join('\n')
+    const r = parseRecipeText(text)
+    expect(r.title).toBe('Quick Dal')
+    expect(r.servings).toBe('4')
+    expect(r.ingredients.split('\n')).toEqual(['1 cup red lentils', '1 tsp turmeric'])
+    expect(r.steps.split('\n')).toEqual(['Rinse the lentils.', 'Boil for 20 minutes.'])
+  })
 })
 
 describe('parseRecipeText — heuristic (no headers)', () => {
