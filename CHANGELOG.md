@@ -6,6 +6,32 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **The bookmarklet reads pages with no recipe markup too.** It used to
+  collect only structured data, so on a blog that typed the recipe into a
+  table it had nothing to send, and the app answered with a silent home
+  page. Now, when a page has neither JSON-LD nor microdata, the bookmarklet
+  sends the article's visible text (capped at 8 KB) and the page's picture,
+  and the app reads the recipe out of that text into the editor, link kept,
+  exactly as a fetched page without markup is since 1.21. Already-installed
+  bookmarklets keep working; re-dragging the new one adds the text path.
+
+### Changed
+
+- The add-recipe and import-help screens now load on demand, like About,
+  Pantry and the week plan. Every chunk is precached by the service worker,
+  so they open instantly and offline as before. The entry bundle every
+  visitor downloads drops from 77.8 KB to 74.8 KB gzipped; the all-assets
+  budget is raised to 120 KB for the new pay-per-use chunks, the fourth such
+  raise under the same policy.
+
+### Fixed
+
+- A bookmarklet press that found no recipe (and any import hash that would
+  not decode) landed on the home page with nothing said. It now says what
+  it found, and that the recipe can still be typed in or pasted.
+
 ## [1.21.0] - 2026-10-22
 
 ### Added

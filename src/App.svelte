@@ -22,10 +22,10 @@
   import { parseRoute, routeToHash, type Route } from './lib/route'
   import RecipeView from './lib/components/RecipeView.svelte'
   import JarView from './lib/components/JarView.svelte'
-  // ShopPlan loads on demand: it is only reachable from My Jar's plan button,
-  // and the entry budget wants the bytes back (same treatment as AboutView).
-  import ManualEntry from './lib/components/ManualEntry.svelte'
-  import ImportHelp from './lib/components/ImportHelp.svelte'
+  // ShopPlan, ManualEntry and ImportHelp load on demand: each is a screen most
+  // sessions never open, and the entry budget wants the bytes back (same
+  // treatment as AboutView). The service worker precaches every chunk, so
+  // they open instantly and offline all the same.
   import InstallTip from './lib/components/InstallTip.svelte'
   // AboutView loads on demand: it is a page of legal prose most sessions
   // never open, and the entry budget wants those bytes back.
@@ -837,15 +837,21 @@
       <PantryView onopen={openSaved} onback={goBack} />
     {/await}
   {:else if view === 'add'}
-    <ManualEntry
-      oncreate={handleCreate}
-      onback={goBack}
-      initialText={pendingPhotoText}
-      initialSource={pendingSource}
-      editing={editingId !== null ? recipe : null}
-    />
+    {#await import('./lib/components/ManualEntry.svelte') then M}
+      {@const ManualEntry = M.default}
+      <ManualEntry
+        oncreate={handleCreate}
+        onback={goBack}
+        initialText={pendingPhotoText}
+        initialSource={pendingSource}
+        editing={editingId !== null ? recipe : null}
+      />
+    {/await}
   {:else if view === 'import'}
-    <ImportHelp onback={goBack} ontypein={() => goAdd()} />
+    {#await import('./lib/components/ImportHelp.svelte') then M}
+      {@const ImportHelp = M.default}
+      <ImportHelp onback={goBack} ontypein={() => goAdd()} />
+    {/await}
   {:else if view === 'about'}
     {#await import('./lib/components/AboutView.svelte') then M}
       {@const AboutView = M.default}

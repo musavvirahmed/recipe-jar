@@ -12,8 +12,8 @@
 // anything below the current minor is unreachable bytes in the entry bundle.
 // Past notes live in CHANGELOG.md.
 export const WHATS_NEW: Record<string, string[]> = {
-  '1.21.0': [
-    'Some blogs type the recipe straight into the page, with no markup for us to read, and those links used to end in "No recipe found". Now the jar reads the page text instead, finds the ingredients and steps, and opens the editor with everything filled in and the link kept. Check it looks right, then save.',
+  '1.22.0': [
+    'The bookmarklet now works on pages with no recipe markup too: it sends the page text, and the jar reads the ingredients and steps out of it into the editor, link kept. And when it finds no recipe at all, it says so instead of quietly going home. Drag the bookmarklet to your bookmarks bar again to pick up the new one.',
   ],
 }
 
