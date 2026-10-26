@@ -1,7 +1,6 @@
 <script lang="ts">
   import type { Recipe } from './lib/types'
-  import { parseAllRecipesFromHtml, pickBestRecipe } from './lib/parse'
-  import { parseImportedHtml } from './lib/importRecipe'
+  import { parseRecipeFromHtml, parseAllRecipesFromHtml, pickBestRecipe } from './lib/parse'
   import { searchSitesForgiving, type SearchHit } from './lib/sitesearch'
   import {
     saveRecipe,
@@ -512,10 +511,18 @@
     dishQuery = ''
     choices = null
     try {
+      // A YouTube link in any of its forms (youtu.be, Shorts, mobile) becomes
+      // the one watch URL, so the proxy cache and the jar's dedupe see one
+      // page. Lazy: only a link that looks like YouTube loads that code.
       let sourceUrl = target
+      let video = false
       if (/youtu\.?be/i.test(target)) {
-        const { isYouTubeUrl, normalizeYouTubeWatchUrl } = await import('./lib/youtube')
-        if (isYouTubeUrl(target)) sourceUrl = normalizeYouTubeWatchUrl(target) ?? target
+        const { normalizeYouTubeWatchUrl } = await import('./lib/youtube')
+        const watch = normalizeYouTubeWatchUrl(target)
+        if (watch) {
+          sourceUrl = watch
+          video = true
+        }
       }
       const res = await fetch(`/api/proxy?url=${encodeURIComponent(sourceUrl)}`)
       if (!res.ok) {
@@ -532,26 +539,26 @@
         loading = false
         return
       }
-      // Structured recipe first; YouTube watch pages may fall back to description text.
-      const parsed = await parseImportedHtml(html, sourceUrl)
+      const parsed = parseRecipeFromHtml(html, sourceUrl)
       if (!parsed) {
         // No recipe markup. The recipe is often still there as plain text (a
-        // table, a list, lines split by <br>), so read it that way and land in
-        // the editor, where the cook checks it before saving: a heuristic read
-        // never gets to pose as a clean card. Lazy: only a failed import pays
-        // for the rescue code.
-        const { rescueFromHtml } = await import('./lib/rescue')
-        const rescued = rescueFromHtml(html)
+        // table, a list, lines split by <br>, a video's description), so read
+        // it that way and land in the editor, where the cook checks it before
+        // saving: a heuristic read never gets to pose as a clean card. Lazy:
+        // only a failed import pays for the rescue code.
+        const rescued = video
+          ? (await import('./lib/youtube')).rescueFromYouTube(html)
+          : (await import('./lib/rescue')).rescueFromHtml(html)
         if (rescued) {
-          const existing = await findBySource(target)
+          const existing = await findBySource(sourceUrl)
           if (existing) {
             // Rescued and saved once already: show that copy, not a second one.
             recipe = existing.recipe
             savedId = existing.id
             navigate({ view: 'recipe', id: savedId })
           } else {
-            reportParseIssue(target, 'text-rescued')
-            goAdd(rescued.text, { url: target, image: rescued.image })
+            reportParseIssue(sourceUrl, 'text-rescued')
+            goAdd(rescued.text, { url: sourceUrl, image: rescued.image })
           }
           url = ''
           return

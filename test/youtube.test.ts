@@ -1,433 +1,200 @@
-import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { parseImportedHtml } from '../src/lib/importRecipe'
+import { parseRecipeText } from '../src/lib/textparse'
 import {
-  extractYouTubeDescription,
+  descriptionLines,
   isYouTubeUrl,
   normalizeYouTubeWatchUrl,
-  tryParseYouTubeRecipe,
+  rescueFromYouTube,
+  youtubeDescription,
 } from '../src/lib/youtube'
 
+// A watch page reduced to what matters: the player JSON inside a script, and
+// the og:image. The descriptions are made up, in the shapes creators use.
+function watchPage(title: string, description: string): string {
+  const player = JSON.stringify({ videoDetails: { videoId: 'abcdefghijk', title, shortDescription: description } })
+  return `<!DOCTYPE html><html><head><title>${title} - YouTube</title>
+<meta property="og:image" content="https://i.ytimg.com/vi/abcdefghijk/maxresdefault.jpg">
+</head><body><script nonce="x">var ytInitialPlayerResponse = ${player};var other = {"a":"}"};</script></body></html>`
+}
+
+// Macros line, "cookbook in bio", a one-line "Ingredients:" header with a
+// yield note, numbered directions, a social footer and hashtags.
+const SALMON = [
+  '480 cals 36g protein 18g fat 30g carbs',
+  '',
+  'Cookbook in bio 🔗',
+  '',
+  'Ingredients: this makes 4 meals',
+  '',
+  '1 lb salmon fillet',
+  '8 oz dry pasta',
+  '1 (5 oz) herb cheese',
+  '2 cups cherry tomatoes',
+  '1 shallot, thinly sliced',
+  '1 tbsp olive oil',
+  '½ tsp salt, or to taste',
+  '',
+  'Directions:',
+  '',
+  '1. Preheat oven to 400°F. Put the cheese in the middle of a baking dish, add the salmon, tomatoes and shallot, drizzle with oil.',
+  '',
+  '2. Bake 25 minutes, until the salmon flakes.',
+  '',
+  '3. Cook the pasta, then toss everything together until creamy.',
+  '',
+  '4. Divide into 4 containers and enjoy!',
+  '',
+  'Follow for more',
+  '',
+  '#cooking #salmon #mealprep',
+].join('\n')
+
 describe('youtube urls', () => {
-  it('detects watch, shorts, youtu.be', () => {
-    expect(isYouTubeUrl('https://www.youtube.com/watch?v=V4i77gmd-vI')).toBe(true)
-    expect(isYouTubeUrl('https://www.youtube.com/shorts/V4i77gmd-vI')).toBe(true)
-    expect(isYouTubeUrl('https://youtu.be/V4i77gmd-vI')).toBe(true)
+  it('detects watch, Shorts, mobile and youtu.be links', () => {
+    expect(isYouTubeUrl('https://www.youtube.com/watch?v=abcdefghijk')).toBe(true)
+    expect(isYouTubeUrl('https://www.youtube.com/shorts/abcdefghijk')).toBe(true)
+    expect(isYouTubeUrl('https://m.youtube.com/watch?v=abcdefghijk')).toBe(true)
+    expect(isYouTubeUrl('https://youtu.be/abcdefghijk')).toBe(true)
     expect(isYouTubeUrl('https://www.bbcgoodfood.com/recipes/x')).toBe(false)
+    expect(isYouTubeUrl('not a url')).toBe(false)
   })
 
-  it('normalizes to watch?v=', () => {
-    expect(normalizeYouTubeWatchUrl('https://youtu.be/V4i77gmd-vI')).toBe(
-      'https://www.youtube.com/watch?v=V4i77gmd-vI',
-    )
-    expect(normalizeYouTubeWatchUrl('https://www.youtube.com/shorts/V4i77gmd-vI')).toBe(
-      'https://www.youtube.com/watch?v=V4i77gmd-vI',
-    )
-    expect(normalizeYouTubeWatchUrl('https://m.youtube.com/watch?v=V4i77gmd-vI')).toBe(
-      'https://www.youtube.com/watch?v=V4i77gmd-vI',
-    )
+  it('normalizes every form of a video link to one watch URL', () => {
+    const watch = 'https://www.youtube.com/watch?v=abcdefghijk'
+    expect(normalizeYouTubeWatchUrl('https://youtu.be/abcdefghijk?t=12')).toBe(watch)
+    expect(normalizeYouTubeWatchUrl('https://www.youtube.com/shorts/abcdefghijk')).toBe(watch)
+    expect(normalizeYouTubeWatchUrl('https://m.youtube.com/watch?v=abcdefghijk&list=PL1')).toBe(watch)
+    expect(normalizeYouTubeWatchUrl('https://www.youtube.com/embed/abcdefghijk')).toBe(watch)
   })
 
-  it('does not normalize non-YouTube hosts that embed a watch link', () => {
-    expect(
-      normalizeYouTubeWatchUrl(
-        'https://example.com/blog?ref=youtube.com/watch?v=abcdefghijk',
-      ),
-    ).toBeNull()
+  it('leaves other sites alone, even ones that mention youtube', () => {
+    expect(normalizeYouTubeWatchUrl('https://example.com/blog?ref=youtube.com/watch?v=abcdefghijk')).toBeNull()
     expect(normalizeYouTubeWatchUrl('https://notyoutube.com/shorts/abcdefghijk')).toBeNull()
+    expect(normalizeYouTubeWatchUrl('https://www.youtube.com/@somechannel')).toBeNull()
   })
 })
 
-describe('extractYouTubeDescription', () => {
-  it('reads title and shortDescription from fixture', () => {
-    const html = readFileSync('fixtures/youtube-salmon-meal-prep.html', 'utf8')
-    const got = extractYouTubeDescription(html)
-    expect(got?.title).toMatch(/Salmon Meal Prep/i)
-    expect(got?.description).toMatch(/Ingredients:/i)
-    expect(got?.description).toMatch(/Directions:/i)
+describe('youtubeDescription', () => {
+  it('reads the title and description out of the player JSON', () => {
+    const got = youtubeDescription(watchPage('Salmon Meal Prep', SALMON))
+    expect(got?.title).toBe('Salmon Meal Prep')
+    expect(got?.description).toMatch(/^480 cals/)
+    expect(got?.description).toMatch(/#mealprep$/)
   })
 
-  it('returns null when player JSON is missing', () => {
-    expect(extractYouTubeDescription('<html><body>nope</body></html>')).toBeNull()
-  })
-})
-
-describe('parseImportedHtml', () => {
-  it('prefers JSON-LD over YouTube description on a structured page', async () => {
-    const html = `<!doctype html><html><head>
-      <script type="application/ld+json">${JSON.stringify({
-        '@context': 'https://schema.org',
-        '@type': 'Recipe',
-        name: 'Tomato Soup',
-        recipeIngredient: ['2 tomatoes', 'salt'],
-        recipeInstructions: ['Simmer.'],
-      })}</script>
-      <script>var ytInitialPlayerResponse = ${JSON.stringify({
-        videoDetails: { title: 'Wrong', shortDescription: 'not a recipe' },
-      })};</script>
-      </head><body></body></html>`
-    const r = await parseImportedHtml(html, 'https://www.youtube.com/watch?v=abc12345678')
-    expect(r?.title).toBe('Tomato Soup')
+  it('copes with braces and quotes inside the strings', () => {
+    const got = youtubeDescription(watchPage('Bowl } of "noodles" {', 'Ingredients: {2 eggs}\nMethod: "Boil."'))
+    expect(got?.title).toBe('Bowl } of "noodles" {')
+    expect(got?.description).toBe('Ingredients: {2 eggs}\nMethod: "Boil."')
   })
 
-  it('falls back to YouTube description when structured data is missing', async () => {
-    const html = readFileSync('fixtures/youtube-salmon-meal-prep.html', 'utf8')
-    const recipe = await parseImportedHtml(html, 'https://www.youtube.com/watch?v=V4i77gmd-vI')
-    expect(recipe).not.toBeNull()
-    expect(recipe!.title).toMatch(/Salmon/i)
-  })
-
-  it('returns null for non-recipe pages', async () => {
-    expect(await parseImportedHtml('<html><body>hello</body></html>', 'https://example.com/x')).toBeNull()
+  it('returns null without player JSON', () => {
+    expect(youtubeDescription('<html><body>nope</body></html>')).toBeNull()
+    expect(youtubeDescription('<script>var ytInitialPlayerResponse = {"videoDetails":{"title":"x"}};</script>')).toBeNull()
   })
 })
 
-describe('tryParseYouTubeRecipe', () => {
-  it('builds a recipe from the salmon description fixture', () => {
-    const html = readFileSync('fixtures/youtube-salmon-meal-prep.html', 'utf8')
-    const recipe = tryParseYouTubeRecipe(html, 'https://www.youtube.com/watch?v=V4i77gmd-vI')
-    expect(recipe).not.toBeNull()
-    expect(recipe!.title).toMatch(/Salmon/i)
-    expect(recipe!.ingredients.length).toBeGreaterThanOrEqual(8)
-    expect(recipe!.steps.length).toBe(6)
-    expect(recipe!.servings).toBe(6)
-    expect(recipe!.sourceUrl).toBe('https://www.youtube.com/watch?v=V4i77gmd-vI')
-    // Yield / CTA / hashtag footer must not pollute the card
-    expect(recipe!.ingredients.map((i) => i.raw)).not.toContain('this makes 6 meals')
-    expect(recipe!.ingredients[0]?.raw).toMatch(/sockeye salmon/i)
-    expect(recipe!.steps.some((s) => /follow for more/i.test(s))).toBe(false)
-    expect(recipe!.steps.some((s) => /#cooking/i.test(s))).toBe(false)
-  })
-
-  it('rejects a YouTube page whose description is not a recipe', () => {
-    const html = `<html><script>var ytInitialPlayerResponse = ${JSON.stringify({
-      videoDetails: {
-        title: 'Vlog',
-        shortDescription: 'Cookbook in bio\n\n#cooking',
-      },
-    })};</script></html>`
-    expect(tryParseYouTubeRecipe(html, 'https://www.youtube.com/watch?v=aaaaaaaaaaa')).toBeNull()
-  })
-
-  it('rejects vlog-style descriptions without recipe headers', () => {
-    const html = `<html><script>var ytInitialPlayerResponse = ${JSON.stringify({
-      videoDetails: {
-        title: 'Weekly vlog',
-        shortDescription:
-          'New vlog out now\nCamera: Sony A7\nMusic: Epidemic Sound\nThanks so much for watching and see you next week.',
-      },
-    })};</script></html>`
-    expect(tryParseYouTubeRecipe(html, 'https://www.youtube.com/watch?v=aaaaaaaaaaa')).toBeNull()
-  })
-
-  it('rejects gear-list descriptions without recipe headers', () => {
-    const html = `<html><script>var ytInitialPlayerResponse = ${JSON.stringify({
-      videoDetails: {
-        title: 'My setup',
-        shortDescription:
-          'Gear I use:\nCamera: Sony A7IV\nLens: 24-70mm\nMic: Rode Wireless\nSubscribe for more!',
-      },
-    })};</script></html>`
-    expect(tryParseYouTubeRecipe(html, 'https://www.youtube.com/watch?v=aaaaaaaaaaa')).toBeNull()
-  })
-
-  it('drops section labels, merges titled steps, and strips unicode hashtags', () => {
-    const description = [
-      'Easy Kabsa',
-      '',
-      'Ingredients:',
-      'For sautéing:',
-      'Two cinnamon sticks',
-      'One large onion, chopped (300g)',
-      'For the meat:',
-      'One kilogram beef',
-      'For garnish:',
-      'Fresh coriander, chopped',
-      '',
-      'Instructions:',
-      '1. Prepare the Instant Pot:',
-      'Turn on sauté mode and cook the onions.',
-      '2. Cook the Meat:',
-      'Add the beef and spices, then pressure cook.',
-      '',
-      '#cooking #kabsa',
-      '#طبخ #كبسة_لحم',
-    ].join('\n')
-    const html = `<html><script>var ytInitialPlayerResponse = ${JSON.stringify({
-      videoDetails: { title: 'Easy Instant Pot Kabsa', shortDescription: description },
-    })};</script></html>`
-    const recipe = tryParseYouTubeRecipe(html, 'https://www.youtube.com/watch?v=lrLKZWFHcBI')
-    expect(recipe).not.toBeNull()
-    const rawIngredients = recipe!.ingredients.map((i) => i.raw)
-    expect(rawIngredients).not.toContain('For sautéing:')
-    expect(rawIngredients).not.toContain('For the meat:')
-    expect(rawIngredients).not.toContain('For garnish:')
-    expect(rawIngredients).toContain('Two cinnamon sticks')
-    expect(rawIngredients).toContain('One kilogram beef')
-    expect(recipe!.steps).toEqual([
-      'Prepare the Instant Pot: Turn on sauté mode and cook the onions.',
-      'Cook the Meat: Add the beef and spices, then pressure cook.',
-    ])
-    expect(recipe!.steps.some((s) => /#/.test(s))).toBe(false)
-  })
-
-  it('parses Ingredients + How to make it headers', () => {
-    const description = [
-      'Homemade Mutabal',
-      '',
-      'Ingredients:',
-      '• 2 medium eggplants',
-      '• 2 tbsp tahini',
-      '• 1 garlic clove (crushed)',
-      '• Juice of ½ lemon',
-      '',
-      'How to make it:',
-      ' 1. Roast the eggplants until the skin is charred',
-      ' 2. Peel and mash the flesh',
-      ' 3. Mix in tahini, garlic, lemon juice, and salt',
-      '',
-      '#Mutabal #MiddleEasternFood #Homemade',
-    ].join('\n')
-    const html = `<html><script>var ytInitialPlayerResponse = ${JSON.stringify({
-      videoDetails: {
-        title: 'Homemade Mutabal',
-        shortDescription: description,
-      },
-    })};</script></html>`
-    const recipe = tryParseYouTubeRecipe(html, 'https://www.youtube.com/watch?v=GNSrbqV3d9Y')
-    expect(recipe).not.toBeNull()
-    expect(recipe!.ingredients.map((i) => i.raw)).toEqual([
-      '2 medium eggplants',
-      '2 tbsp tahini',
-      '1 garlic clove (crushed)',
-      'Juice of ½ lemon',
-    ])
-    expect(recipe!.steps).toEqual([
-      'Roast the eggplants until the skin is charred',
-      'Peel and mash the flesh',
-      'Mix in tahini, garlic, lemon juice, and salt',
-    ])
-  })
-
-  it('parses Ingredients + bare RECIPE method headers with prose steps', () => {
-    const description = [
-      'Amazing Potato Gratin',
-      '',
-      '#potato #gratin #dinner #lunch #recipeideas #homefood',
-      '',
-      'Looking for more delicious recipes? Follow @chef!',
-      '',
-      'INGREDIENTS',
-      '700-800g peeled potatoes',
-      '4 cloves of garlic',
-      '250ml sweet cream',
-      'Salt and pepper to taste',
-      '',
-      'RECIPE',
-      'Cut the potatoes into thin slices. Grease the baking dish and put the potatoes in it. Chop onions and garlic. Add them to the sweet cream. Add salt and pepper and pour mixture over the potatoes. Grate the cheese, pour over the potatoes and bake in an oven heated to 200 degrees for about 40-50 minutes.',
-      '',
-      'Enjoy 😊',
-    ].join('\n')
-    const html = `<html><script>var ytInitialPlayerResponse = ${JSON.stringify({
-      videoDetails: { title: 'Amazing Potato Gratin', shortDescription: description },
-    })};</script></html>`
-    const recipe = tryParseYouTubeRecipe(html, 'https://www.youtube.com/watch?v=fevtsW8lcQk')
-    expect(recipe).not.toBeNull()
-    expect(recipe!.ingredients.map((i) => i.raw)).toEqual([
-      '700-800g peeled potatoes',
-      '4 cloves of garlic',
-      '250ml sweet cream',
-      'Salt and pepper to taste',
-    ])
-    expect(recipe!.steps.length).toBeGreaterThanOrEqual(4)
-    expect(recipe!.steps[0]).toMatch(/Cut the potatoes/i)
-    expect(recipe!.steps.some((s) => /Looking for more|Follow @|#potato/i.test(s))).toBe(false)
-  })
-
-  it('splits prose instructions into sentences and drops hashtag SEO trailers', () => {
-    const description = [
-      'CHOCOLATE NUT BARS',
-      '',
-      'Ingredients:',
-      '1 cup raw almonds',
-      '1 cup raw cashews',
-      '2-3 tbs maple syrup',
-      '3 dark chocolate bars',
-      '',
-      'Instructions:',
-      'Mix all nuts in a large mixing bowl with maple syrup, then transfer to a parchment-lined baking dish. Bake at 350° for 15-20 minutes until nuts are golden, then immediately top with dark chocolate bars. Place back in the oven for 2-3 minutes if needed to melt completely, then spread evenly over the baked nuts. Allow to cool in fridge for 10-15 minutes until chocolate has hardened, then slice into bars and enjoy! 😋',
-      '',
-      'viral chocolate nut bars recipe 🍫 #recipe #chocolate #dessert #almond #food #baking #shorts #viral',
-    ].join('\n')
-    const html = `<html><script>var ytInitialPlayerResponse = ${JSON.stringify({
-      videoDetails: {
-        title: 'viral chocolate nut bars recipe 🍫 #recipe #chocolate #dessert',
-        shortDescription: description,
-      },
-    })};</script></html>`
-    const recipe = tryParseYouTubeRecipe(html, 'https://www.youtube.com/watch?v=HZ0hm8mhmRc')
-    expect(recipe).not.toBeNull()
-    expect(recipe!.steps).toEqual([
-      'Mix all nuts in a large mixing bowl with maple syrup, then transfer to a parchment-lined baking dish.',
-      'Bake at 350° for 15-20 minutes until nuts are golden, then immediately top with dark chocolate bars.',
-      'Place back in the oven for 2-3 minutes if needed to melt completely, then spread evenly over the baked nuts.',
-      'Allow to cool in fridge for 10-15 minutes until chocolate has hardened, then slice into bars and enjoy! 😋',
-    ])
-    expect(recipe!.steps.some((s) => /#recipe|#shorts/i.test(s))).toBe(false)
-  })
-
-  it('drops bare category labels like Meat sauce: from ingredients', () => {
-    const description = [
-      'High-protein lasagna',
+describe('descriptionLines', () => {
+  it('splits a one-line header and carries the yield note above it', () => {
+    expect(descriptionLines('Ingredients: this makes 4 meals\n1 lb salmon\nDirections: 1. Bake it.')).toEqual([
+      'this makes 4 meals',
       'Ingredients',
-      'Meat sauce:',
-      '530g extra-lean beef mince',
-      '1,275g passata',
-      'Creamy layer:',
-      '500g low-fat cottage cheese',
-      'Pasta + cheese:',
-      '190g dry lasagne sheets',
-      'Method:',
-      '1. Brown the beef.',
-      '2. Assemble and bake.',
-    ].join('\n')
-    const html = `<html><script>var ytInitialPlayerResponse = ${JSON.stringify({
-      videoDetails: { title: 'Low-Calorie Lasagna', shortDescription: description },
-    })};</script></html>`
-    const recipe = tryParseYouTubeRecipe(html, 'https://www.youtube.com/watch?v=2xuMuNzCyGk')
-    expect(recipe).not.toBeNull()
-    const raw = recipe!.ingredients.map((i) => i.raw)
-    expect(raw).toEqual([
-      '530g extra-lean beef mince',
-      '1,275g passata',
-      '500g low-fat cottage cheese',
-      '190g dry lasagne sheets',
+      '1 lb salmon',
+      'Directions',
+      '1. Bake it.',
     ])
-    const passata = recipe!.ingredients.find((i) => /passata/i.test(i.raw))
-    expect(passata?.qty).toBe(1275)
-    expect(passata?.rest).toBe('g passata')
   })
 
-  it('prefers English in bilingual Arabic-first descriptions', () => {
-    const description = [
-      'كبسة لحم سهلة',
-      '',
-      'المكونات',
-      'للتقليب:',
-      'عودان من القرفة',
-      'بصلة كبيرة مفرومة',
-      'لتحضير اللحم:',
-      'كيلوغرام واحد من لحم البقر',
-      '',
-      'الطريقة',
-      '١. تحضير القدر:',
-      'قم بتشغيل وضع التقليب وأضف البصل.',
-      '٢. طهي اللحم:',
-      'أضف اللحم والتوابل واطبخ تحت الضغط.',
-      'قدّم كبسة اللحم اللذيذة!',
-      '',
-      'Ingredients:',
-      'For sautéing:',
-      'Two cinnamon sticks',
-      'One large onion, chopped',
-      'For the meat:',
-      'One kilogram beef',
-      '',
-      'Instructions:',
-      '1. Prepare the pot:',
-      'Sauté the onions.',
-      '2. Cook the meat:',
-      'Pressure cook until tender.',
-      '',
-      'Serve your delicious kabsa with rice!',
-      '',
-      '#طبخ #كبسة_لحم',
+  it('drops the social footer and hashtag lines, keeps a serving step', () => {
+    const text = [
+      'Ingredients',
+      '1 egg',
+      'Method',
+      'Serve with rice.',
+      'Follow for more',
+      'Thanks for watching!',
+      "🔔 Don't forget to LIKE and SUBSCRIBE!",
+      '#eggs #rice',
+      'viral egg recipe 🍳 #recipe #egg #shorts',
     ].join('\n')
-    const html = `<html><script>var ytInitialPlayerResponse = ${JSON.stringify({
-      videoDetails: {
-        title: 'Easy Instant Pot Arabian Meat Kabsa',
-        shortDescription: description,
-      },
-    })};</script></html>`
-    const recipe = tryParseYouTubeRecipe(html, 'https://www.youtube.com/watch?v=WIPIdiwfPto')
-    expect(recipe).not.toBeNull()
-    const rawIngredients = recipe!.ingredients.map((i) => i.raw)
-    expect(rawIngredients).toEqual([
-      'Two cinnamon sticks',
-      'One large onion, chopped',
-      'One kilogram beef',
-    ])
-    expect(rawIngredients.some((l) => /[\u0600-\u06FF]/.test(l))).toBe(false)
-    expect(recipe!.steps).toEqual([
-      'Prepare the pot: Sauté the onions.',
-      'Cook the meat: Pressure cook until tender.',
-    ])
-    expect(recipe!.steps.some((s) => /Serve your|قدّم|#/.test(s))).toBe(false)
+    expect(descriptionLines(text)).toEqual(['Ingredients', '1 egg', 'Method', 'Serve with rice.'])
   })
 
-  it('parses emoji Ingredients List / Quick Steps descriptions', () => {
+  it('leaves "Beef: 2 lbs" lines as typed', () => {
+    expect(descriptionLines('Beef: 2 lbs\nSalt: 1 tsp')).toEqual(['Beef: 2 lbs', 'Salt: 1 tsp'])
+  })
+})
+
+describe('rescueFromYouTube', () => {
+  it('turns a recipe description into editor text, title and thumbnail kept', () => {
+    const r = rescueFromYouTube(watchPage('Salmon Meal Prep', SALMON))
+    expect(r).not.toBeNull()
+    expect(r!.title).toBe('Salmon Meal Prep')
+    expect(r!.image).toBe('https://i.ytimg.com/vi/abcdefghijk/maxresdefault.jpg')
+    expect(r!.text).not.toMatch(/cals|bio|Follow|#/)
+
+    // What the editor makes of it.
+    const parsed = parseRecipeText(r!.text)
+    expect(parsed.title).toBe('Salmon Meal Prep')
+    expect(parsed.servings).toBe('4')
+    expect(parsed.ingredients.split('\n')).toEqual([
+      '1 lb salmon fillet',
+      '8 oz dry pasta',
+      '1 (5 oz) herb cheese',
+      '2 cups cherry tomatoes',
+      '1 shallot, thinly sliced',
+      '1 tbsp olive oil',
+      '½ tsp salt, or to taste',
+    ])
+    const steps = parsed.steps.split('\n')
+    expect(steps).toHaveLength(4)
+    expect(steps[0]).toMatch(/^Preheat oven to 400°F\./)
+    expect(steps[3]).toBe('Divide into 4 containers and enjoy!')
+  })
+
+  it('reads emoji headers and bullets, and prefers the English block of a bilingual description', () => {
     const description = [
-      'The easiest one-pot Kabsa!',
-      '',
-      '✨ Why You’ll Love This Recipe:',
-      ' * Simple one-pot method',
-      '',
-      '🛒 INGREDIENTS LIST',
-      ' * The Base: 1 large onion (chopped), 1–2 tbsp oil.',
-      ' * Whole Spices: 6 cardamom pods, 8 cloves.',
-      ' * The Meat: 1kg Lamb, 6 cups hot water, 1 tbsp salt.',
-      ' * The Rice: 3 cups Basmati rice, 2 whole chili peppers.',
-      '',
-      '👩‍🍳 QUICK STEPS',
-      ' * Sauté onions and whole spices until fragrant.',
-      ' * Brown the lamb, add water/salt, and pressure cook for 25 mins.',
-      ' * Add soaked rice and chilies.',
-      ' * Cook for 12 mins, fluff, and serve!',
-      '',
-      '💬 Join the Conversation:',
-      'Where are you watching from?',
-      "🔔 Don't forget to LIKE and SUBSCRIBE for more easy authentic recipes!",
+      'The easiest one-pot kabsa!',
       '',
       '🛒 المقادير',
-      ' *بصلة كبيرة مفرومة',
-      '👩‍🍳 طريقة التحضير في قدر الضغط الكهربائي',
-      ' * اختر وضعية Sauté',
+      '* بصلة كبيرة مفرومة',
+      '* كيلو لحم',
+      '👩‍🍳 طريقة التحضير',
+      '* اطبخ اللحم.',
+      '',
+      '🛒 INGREDIENTS LIST',
+      '* 1 large onion, chopped',
+      '* 1 kg lamb',
+      '* 3 cups basmati rice',
+      '',
+      '👩‍🍳 QUICK STEPS',
+      '* Sauté the onion until soft.',
+      '* Brown the lamb and pressure cook for 25 mins.',
+      '* Add the rice and cook for 12 mins.',
+      '',
+      "🔔 Don't forget to LIKE and SUBSCRIBE!",
     ].join('\n')
-    const html = `<html><script>var ytInitialPlayerResponse = ${JSON.stringify({
-      videoDetails: {
-        title: 'Easy Instant Pot Arabian Meat Kabsa',
-        shortDescription: description,
-      },
-    })};</script></html>`
-    const recipe = tryParseYouTubeRecipe(html, 'https://www.youtube.com/watch?v=sOxIYX64xQM')
-    expect(recipe).not.toBeNull()
-    expect(recipe!.ingredients.map((i) => i.raw)).toEqual([
-      'The Base: 1 large onion (chopped), 1–2 tbsp oil.',
-      'Whole Spices: 6 cardamom pods, 8 cloves.',
-      'The Meat: 1kg Lamb, 6 cups hot water, 1 tbsp salt.',
-      'The Rice: 3 cups Basmati rice, 2 whole chili peppers.',
+    const r = rescueFromYouTube(watchPage('Easy Instant Pot Kabsa', description))
+    expect(r).not.toBeNull()
+    expect(r!.text).not.toMatch(/[\u0600-\u06FF]|SUBSCRIBE/)
+    const parsed = parseRecipeText(r!.text)
+    expect(parsed.title).toBe('Easy Instant Pot Kabsa')
+    expect(parsed.servings).toBe('') // "cook for 25 mins" is a time, not a serving count
+    expect(parsed.ingredients.split('\n')).toEqual(['1 large onion, chopped', '1 kg lamb', '3 cups basmati rice'])
+    expect(parsed.steps.split('\n')).toEqual([
+      'Sauté the onion until soft.',
+      'Brown the lamb and pressure cook for 25 mins.',
+      'Add the rice and cook for 12 mins.',
     ])
-    expect(recipe!.steps).toEqual([
-      'Sauté onions and whole spices until fragrant.',
-      'Brown the lamb, add water/salt, and pressure cook for 25 mins.',
-      'Add soaked rice and chilies.',
-      'Cook for 12 mins, fluff, and serve!',
-    ])
-    expect(recipe!.ingredients.some((i) => /[\u0600-\u06FF]/.test(i.raw))).toBe(false)
   })
 
-  it('parses Markdown Ingredients / Cooking Steps descriptions', () => {
+  it('reads Markdown headers and labelled lines as typed, and stops at the divider before the outro', () => {
     const description = [
       '### Ingredients:',
       '',
       '#### Beef and Marinade:',
       '- **Beef**: 2 lbs (lean cut)',
       '- **Baking Soda**: 1.5 tsp',
-      '- **Cornstarch**: 3 tbsp',
-      '',
-      '#### Sauce:',
-      '- **Soy Sauce**: 1 tbsp',
-      '- **Oyster Sauce**: 1/2 tbsp',
       '',
       '---',
       '',
@@ -436,51 +203,41 @@ describe('tryParseYouTubeRecipe', () => {
       '#### 1. **Prepare the Beef**:',
       '- Slice against the grain into thin pieces.',
       '',
-      '#### 2. **Marinate the Beef**:',
-      '- Mix the marinade and coat the beef.',
-      '',
-      '#### 3. **Cook the Beef**:',
-      '- Sear, then stir-fry with the sauce.',
-      '',
       '---',
       '',
       'This recipe ensures tender beef. Enjoy!',
     ].join('\n')
-    const html = `<html><script>var ytInitialPlayerResponse = ${JSON.stringify({
-      videoDetails: {
-        title: 'Chinese Restaurant Beef',
-        shortDescription: description,
-      },
-    })};</script></html>`
-    const recipe = tryParseYouTubeRecipe(html, 'https://www.youtube.com/watch?v=I4Szo0odIDo')
-    expect(recipe).not.toBeNull()
-    const raw = recipe!.ingredients.map((i) => i.raw)
-    expect(raw).not.toContain('Beef and Marinade:')
-    expect(raw).not.toContain('Sauce:')
-    expect(raw).toContain('2 lbs (lean cut) Beef')
-    expect(raw).toContain('1.5 tsp Baking Soda')
-    expect(raw).toContain('1 tbsp Soy Sauce')
-    expect(recipe!.steps.length).toBeGreaterThanOrEqual(3)
-    expect(recipe!.steps.some((s) => /Slice against the grain/i.test(s))).toBe(true)
-    expect(recipe!.steps.some((s) => /This recipe ensures/i.test(s))).toBe(false)
+    const r = rescueFromYouTube(watchPage('Restaurant Style Beef', description))
+    expect(r).not.toBeNull()
+    const parsed = parseRecipeText(r!.text)
+    expect(parsed.ingredients.split('\n')).toEqual(['Beef and Marinade:', 'Beef: 2 lbs (lean cut)', 'Baking Soda: 1.5 tsp'])
+    expect(parsed.steps.split('\n')).toEqual(['Prepare the Beef:', 'Slice against the grain into thin pieces.'])
+    expect(parsed.steps).not.toMatch(/tender beef/)
   })
 
-  it('still parses Arabic-only descriptions', () => {
-    const description = [
-      'كبسة دجاج',
-      'المكونات',
-      'دجاجة كاملة',
-      'كوبان أرز',
-      'الطريقة',
-      '١. اغسل الأرز.',
-      '٢. اطبخ الدجاج.',
-    ].join('\n')
-    const html = `<html><script>var ytInitialPlayerResponse = ${JSON.stringify({
-      videoDetails: { title: 'كبسة دجاج', shortDescription: description },
-    })};</script></html>`
-    const recipe = tryParseYouTubeRecipe(html, 'https://www.youtube.com/watch?v=bbbbbbbbbbb')
-    expect(recipe).not.toBeNull()
-    expect(recipe!.ingredients.map((i) => i.raw)).toEqual(['دجاجة كاملة', 'كوبان أرز'])
-    expect(recipe!.steps).toEqual(['اغسل الأرز.', 'اطبخ الدجاج.'])
+  it('accepts a list with prose steps and no steps header, when the lines read like a recipe', () => {
+    const r = rescueFromYouTube(
+      watchPage('Oat Pancakes', 'Ingredients\n1 cup oats\n1 banana\n2 eggs\nBlend everything and fry small pancakes in butter.'),
+    )
+    expect(r).not.toBeNull()
+    expect(parseRecipeText(r!.text).steps).toBe('Blend everything and fry small pancakes in butter.')
+  })
+
+  it('returns null when the description is not a recipe', () => {
+    expect(rescueFromYouTube(watchPage('Vlog', 'Cookbook in bio 🔗\n\n#cooking'))).toBeNull()
+    expect(
+      rescueFromYouTube(
+        watchPage('Weekly vlog', 'New vlog out now\nCamera: Sony A7\nMusic: Epidemic Sound\nThanks so much for watching and see you next week.'),
+      ),
+    ).toBeNull()
+    expect(
+      rescueFromYouTube(watchPage('My setup', 'Gear I use:\nCamera: Sony A7IV\nLens: 24-70mm\nMic: Rode Wireless\nSubscribe for more!')),
+    ).toBeNull()
+    // A header with a list under it, but no method at all.
+    expect(rescueFromYouTube(watchPage('Shopping', 'Ingredients\n1 cup oats\n1 banana\n2 eggs'))).toBeNull()
+  })
+
+  it('returns null for a page that is not a watch page', () => {
+    expect(rescueFromYouTube('<html><body><h1>Hello</h1></body></html>')).toBeNull()
   })
 })

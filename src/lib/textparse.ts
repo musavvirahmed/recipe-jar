@@ -49,7 +49,7 @@ function isRecipeHeader(line: string): boolean {
 
 /** A Latin-script header, as opposed to an Arabic one in the same bilingual paste. */
 function isLatinRecipeHeader(line: string): boolean {
-  return isRecipeHeader(line) && !/[؀-ۿ]/.test(line)
+  return isRecipeHeader(line) && !/[\u0600-\u06FF]/.test(line)
 }
 
 // Lines that are website or app chrome, not recipe content. Dropped before
