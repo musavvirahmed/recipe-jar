@@ -6,6 +6,62 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.22.0] - 2026-10-22
+
+### Added
+
+- **The bookmarklet reads pages with no recipe markup too.** It used to
+  collect only structured data, so on a blog that typed the recipe into a
+  table it had nothing to send, and the app answered with a silent home
+  page. Now, when a page has neither JSON-LD nor microdata, the bookmarklet
+  sends the article's visible text (capped at 8 KB) and the page's picture,
+  and the app reads the recipe out of that text into the editor, link kept,
+  exactly as a fetched page without markup is since 1.21. Already-installed
+  bookmarklets keep working; re-dragging the new one adds the text path.
+
+### Changed
+
+- The add-recipe and import-help screens now load on demand, like About,
+  Pantry and the week plan. Every chunk is precached by the service worker,
+  so they open instantly and offline as before. The entry bundle every
+  visitor downloads drops from 77.8 KB to 74.8 KB gzipped; the all-assets
+  budget is raised to 120 KB for the new pay-per-use chunks, the fourth such
+  raise under the same policy.
+
+### Fixed
+
+- A bookmarklet press that found no recipe (and any import hash that would
+  not decode) landed on the home page with nothing said. It now says what
+  it found, and that the recipe can still be typed in or pasted.
+
+## [1.21.0] - 2026-10-22
+
+### Added
+
+- **Pages with no recipe markup land in the editor, pre-filled.** Some
+  blogs publish the recipe as plain text only (a WordPress table, a list,
+  lines split by `<br>`), with no JSON-LD and no microdata for the parser to
+  read. Those used to end in "No recipe found", and both rescues the error
+  offered failed on them too. Now a failed import reads the page text, finds
+  the ingredients block, and opens the manual-entry form with title,
+  ingredients, steps, the page's picture, and the link kept, with a note
+  saying the text was read rather than imported. A heuristic read never poses
+  as a clean card: the cook checks it, then creates. Pages with no ingredients
+  block (a travel post, a narrative-only recipe) still get the honest error.
+  The rescue code is a 1.3 KB lazy chunk, paid for only by a failed import.
+  (#24)
+
+### Fixed
+
+- Pasted text with an "Ingredients" heading but no "Method" heading put the
+  numbered steps into the ingredients box. The steps now start at the first
+  "1." line. The mirror case (a "Method" heading with the ingredients listed
+  above it, unlabelled) dropped those ingredients; they are kept now. A
+  "Recipe: Dal Tadka" title line loses its label.
+- Parse-failure telemetry gains a `text-rescued` reason, so the dashboard
+  can tell real recipe blogs without markup from pages that were never
+  recipes (both used to count as `no-recipe`).
+
 ## [1.20.1] - 2026-08-24
 
 ### Fixed
@@ -600,7 +656,9 @@ The first public release. Everything below ships on day one.
 - Hardened fetch proxy: caller verification, SSRF guards, HTML-only responses,
   and edge caching.
 
-[Unreleased]: https://github.com/sbmagar13/recipe-jar/compare/v1.20.1...HEAD
+[Unreleased]: https://github.com/sbmagar13/recipe-jar/compare/v1.22.0...HEAD
+[1.22.0]: https://github.com/sbmagar13/recipe-jar/releases/tag/v1.22.0
+[1.21.0]: https://github.com/sbmagar13/recipe-jar/releases/tag/v1.21.0
 [1.20.1]: https://github.com/sbmagar13/recipe-jar/releases/tag/v1.20.1
 [1.20.0]: https://github.com/sbmagar13/recipe-jar/releases/tag/v1.20.0
 [1.19.1]: https://github.com/sbmagar13/recipe-jar/releases/tag/v1.19.1

@@ -9,18 +9,24 @@ export interface ParsedText {
   steps: string // newline-joined
 }
 
-/**
- * Core header patterns — matched against {@link normalizeHeaderCandidate} output
- * so "🛒 INGREDIENTS LIST" and "Ingredients:" share one allowlist.
- */
+// Core header patterns, matched against normalizeHeaderCandidate output so
+// "🛒 INGREDIENTS LIST", "### Ingredients:" and "Ingredients" share one
+// allowlist. Exported for the page-text rescue (rescue.ts), which anchors on
+// the same header so a page, a paste and a video description are read by one
+// set of rules.
 export const INGREDIENTS_HEADER =
   /^(?:ingredients(?:\s+list)?|ingredienser|zutaten|ingr[eé]dients|you will need|shopping list|المكونات|المقادير)[:\s]*$/i
 export const STEPS_HEADER =
   /^(?:methods?|instructions?|directions?|(?:cooking|quick)\s+steps|steps|preparation|recipe|rezept|how to (?:make|cook|prepare)(?:\s+it)?|g[öo]r s[åa] h[äa]r|instruktioner|tillagning|s[åa] h[äa]r g[öo]r du|(?:ال)?طريقة(?:\s+(?:التحضير|الإعداد)(?:\s+.*)?)?)[:\s]*$/i
 
+// "---" between the recipe and an outro or a translation of it.
 const SECTION_DIVIDER = /^[-–—=*_]{2,}$/
+// A "Serves 4" / "Yield: 12" line is metadata, never an ingredient.
+const SERVINGS_LINE = /^(serves|servings|yield|makes|portions?|portioner)\b/i
+// "Recipe: Dal Tadka" as a title line: the label is the page's, not the dish's.
+const TITLE_LABEL = /^recipe\s*[:\-–]\s*/i
 
-/** Strip emoji, Markdown, and bullets so "🛒 INGREDIENTS LIST" matches the allowlist. */
+/** Strip emoji, Markdown and bullets so "🛒 INGREDIENTS LIST" matches the allowlist. */
 export function normalizeHeaderCandidate(line: string): string {
   return line
     .trim()
@@ -37,13 +43,13 @@ export function isStepsHeader(line: string): boolean {
   return STEPS_HEADER.test(normalizeHeaderCandidate(line))
 }
 
-/** English (and other Latin-script) block, as opposed to an Arabic header in the same paste. */
-function isLatinRecipeHeader(line: string): boolean {
-  return isRecipeHeader(line) && !/[\u0600-\u06FF]/.test(line)
-}
-
 function isRecipeHeader(line: string): boolean {
   return isIngredientsHeader(line) || isStepsHeader(line)
+}
+
+/** A Latin-script header, as opposed to an Arabic one in the same bilingual paste. */
+function isLatinRecipeHeader(line: string): boolean {
+  return isRecipeHeader(line) && !/[؀-ۿ]/.test(line)
 }
 
 // Lines that are website or app chrome, not recipe content. Dropped before
@@ -68,8 +74,10 @@ function isChrome(line: string): boolean {
   return CHROME_LINE.some((re) => re.test(line))
 }
 
-// Leading list bullets, checkbox glyphs, and Western / Arabic-Indic numerals.
-const NUMBERED = /^\s*[\d\u0660-\u0669\u06F0-\u06F9]+[.)]\s+/
+// "1. " / "2) " / "٣. ": a numbered step line, Western or Arabic-Indic digits.
+// Exported for rescue.ts, which uses it to tell the list from the method.
+export const NUMBERED = /^\s*[\d٠-٩۰-۹]+[.)]\s+/
+// Leading list bullets and checkbox glyphs.
 const GLYPH = /^[-*•·▢□☐●▪]+\s+/
 
 // A measurement-ish token at the start suggests an ingredient line.
@@ -94,7 +102,7 @@ function detectServings(text: string): string {
   return m?.[1] || m?.[2] || m?.[3] || ''
 }
 
-function looksLikeIngredient(line: string): boolean {
+export function looksLikeIngredient(line: string): boolean {
   const l = line.trim()
   if (!l) return false
   if (MEASURE.test(l)) return true
@@ -118,7 +126,8 @@ export function parseRecipeText(text: string): ParsedText {
     .filter((l) => l.length > 0 && !isChrome(l))
   const servings = detectServings(text)
 
-  // Prefer a Latin (usually English) ingredients+steps pair when the paste has both languages.
+  // Locate the ingredients + steps header pair. A bilingual paste carries two
+  // pairs; prefer the Latin-script (usually English) one.
   let ingIdx = -1
   let stepIdx = -1
   let latin = false
@@ -150,14 +159,27 @@ export function parseRecipeText(text: string): ParsedText {
 
     const ingEnd = stepIdx > ingIdx ? stepIdx : lines.length
     if (ingIdx !== -1) {
+      // With no steps header, the ingredient list runs to the end of the text,
+      // so a "1. Toast the chili" line is where the method starts: from there
+      // on, every line is a step (a WordPress recipe table reads like this).
+      let inSteps = false
       for (const l of lines.slice(ingIdx + 1, ingEnd)) {
         if (isRecipeHeader(l) || SECTION_DIVIDER.test(l)) continue
-        ingredients.push(stripBullet(l))
+        if (stepIdx === -1 && !inSteps && ingredients.length > 0 && NUMBERED.test(l)) inSteps = true
+        ;(inSteps ? steps : ingredients).push(stripBullet(l))
+      }
+    } else {
+      // A steps header with no ingredients header: the measure-looking lines
+      // between the title and the header are the ingredients, not padding.
+      for (const l of lines.slice(0, stepIdx)) {
+        if (l === title || isRecipeHeader(l) || SERVINGS_LINE.test(l)) continue
+        if (looksLikeIngredient(l)) ingredients.push(stripBullet(l))
       }
     }
     if (stepIdx !== -1) {
       for (const l of lines.slice(stepIdx + 1)) {
-        // Divider or a new Ingredients header → outro / another language block.
+        // A divider or a second Ingredients header: the outro, or the same
+        // recipe again in another language.
         if (SECTION_DIVIDER.test(l) || isIngredientsHeader(l)) break
         if (isStepsHeader(l)) continue
         steps.push(stripBullet(l))
@@ -167,15 +189,14 @@ export function parseRecipeText(text: string): ParsedText {
     // No headers: classify line by line. First line is the title.
     title = lines[0] ?? ''
     for (const l of lines.slice(1)) {
-      const isNumbered = NUMBERED.test(l)
-      if (isNumbered) steps.push(stripBullet(l))
+      if (NUMBERED.test(l)) steps.push(stripBullet(l))
       else if (looksLikeIngredient(l)) ingredients.push(stripBullet(l))
       else steps.push(stripBullet(l))
     }
   }
 
   return {
-    title: title.trim(),
+    title: title.replace(TITLE_LABEL, '').trim(),
     servings,
     ingredients: ingredients.filter(Boolean).join('\n'),
     steps: steps.filter(Boolean).join('\n'),

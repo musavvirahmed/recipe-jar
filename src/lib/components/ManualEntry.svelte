@@ -10,12 +10,16 @@
     // Text handed over from the home-screen photo picker: OCR runs there, and we
     // land here with the fields already filled and ready to review.
     initialText?: string
+    // Where initialText came from when it was rescued from a page with no
+    // recipe markup: the card keeps the link and picture, and the form says
+    // the text was read, not imported.
+    initialSource?: { url: string; image: string | null } | null
     // A saved recipe being edited: fields prefill, the photo/paste helpers hide
     // (an edit is a touch-up, not a re-import), and metadata is preserved.
     editing?: Recipe | null
   }
 
-  let { oncreate, onback, initialText = '', editing = null }: Props = $props()
+  let { oncreate, onback, initialText = '', initialSource = null, editing = null }: Props = $props()
 
   let title = $state('')
   let servingsText = $state('4')
@@ -92,9 +96,9 @@
     // times); a fresh creation starts clean.
     const base = editing ?? {
       description: '',
-      image: null,
+      image: initialSource?.image ?? null,
       author: null,
-      sourceUrl: '',
+      sourceUrl: initialSource?.url ?? '',
       totalTime: null,
       prepTime: null,
       cookTime: null,
@@ -114,6 +118,8 @@
   <h1 class="jar-title">{editing ? 'Edit recipe' : 'Add or paste a recipe'}</h1>
   {#if editing}
     <p class="sub">Make it yours: fix a line, change an amount, rewrite a step. Tags, notes, and your cooking history stay put.</p>
+  {:else if initialSource}
+    <p class="sub" role="status">That page has no recipe markup, so we read its text instead. Check the fields look right, then create. The link stays on the card.</p>
   {:else}
   <p class="sub">For family recipes, or any page that would not import. Snap a photo or paste the text to auto-fill, then fix anything that looks off. Kept on this device, like everything else.</p>
   {/if}

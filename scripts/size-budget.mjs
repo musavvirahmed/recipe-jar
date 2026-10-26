@@ -17,13 +17,15 @@ const ASSETS = 'dist/assets'
 // for the opt-in photo-import chunk (tesseract API; the ~6 MB engine is
 // self-hosted under /ocr and never counted here), and a third time for the
 // 1.x lazy chunks (spelling correction, auto-backup, the share-image card),
-// each of which downloads only when its feature is used. The entry budget is
-// the guard that matters: it is what every visitor downloads, and it went
-// DOWN across those releases (77.9 → 75.8) as rarely-visited views moved out.
+// each of which downloads only when its feature is used, and a fourth time
+// when the add-recipe and import-help screens moved out of the entry.
+// The entry budget is the guard that matters: it is what every visitor
+// downloads, and it went DOWN across those releases (77.9 → 75.8 → 74.5) as
+// rarely-visited views moved out.
 const BUDGETS = [
   { label: 'entry JS  (gz)', match: (f) => /^index-.*\.js$/.test(f), maxKB: 78 },
   { label: 'entry CSS (gz)', match: (f) => /^index-.*\.css$/.test(f), maxKB: 12 },
-  { label: 'all assets (gz)', match: (f) => /\.(js|css)$/.test(f), maxKB: 110 },
+  { label: 'all assets (gz)', match: (f) => /\.(js|css)$/.test(f), maxKB: 120 },
 ]
 
 if (!existsSync(ASSETS)) {

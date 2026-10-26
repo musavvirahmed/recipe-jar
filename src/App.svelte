@@ -15,7 +15,7 @@
     updateRecipe,
     type SavedRecipe,
   } from './lib/db'
-  import { consumeImportHash } from './lib/bookmarklet'
+  import { consumeImportHash, type ImportResult } from './lib/bookmarklet'
   import { consumeShareHash, decodeShare } from './lib/share'
   import { imageToText } from './lib/ocr'
   import { countEvent, reportParseIssue } from './lib/telemetry'
@@ -23,10 +23,10 @@
   import { parseRoute, routeToHash, type Route } from './lib/route'
   import RecipeView from './lib/components/RecipeView.svelte'
   import JarView from './lib/components/JarView.svelte'
-  // ShopPlan loads on demand: it is only reachable from My Jar's plan button,
-  // and the entry budget wants the bytes back (same treatment as AboutView).
-  import ManualEntry from './lib/components/ManualEntry.svelte'
-  import ImportHelp from './lib/components/ImportHelp.svelte'
+  // ShopPlan, ManualEntry and ImportHelp load on demand: each is a screen most
+  // sessions never open, and the entry budget wants the bytes back (same
+  // treatment as AboutView). The service worker precaches every chunk, so
+  // they open instantly and offline all the same.
   import InstallTip from './lib/components/InstallTip.svelte'
   // AboutView loads on demand: it is a page of legal prose most sessions
   // never open, and the entry budget wants those bytes back.
@@ -223,10 +223,13 @@
     navigate({ view: next })
   }
 
-  // Open the manual-entry form, optionally pre-filled with photo text. Passing no
-  // text (a plain "type your own") clears any leftover OCR so the form is blank.
-  function goAdd(text = '') {
+  // Open the manual-entry form, optionally pre-filled with photo text or text
+  // rescued from a page (then `source` keeps the link and picture). Passing no
+  // text (a plain "type your own") clears any leftover fill so the form is blank.
+  let pendingSource = $state<{ url: string; image: string | null } | null>(null)
+  function goAdd(text = '', source: { url: string; image: string | null } | null = null) {
     pendingPhotoText = text
+    pendingSource = source
     editingId = null
     go('add')
   }
@@ -237,6 +240,7 @@
     if (savedId === null || !recipe) return
     editingId = savedId
     pendingPhotoText = ''
+    pendingSource = null
     go('add')
   }
 
@@ -282,7 +286,7 @@
   function onLocationChange() {
     const imported = consumeImportHash()
     if (imported) {
-      showImportedRecipe(imported)
+      void handleImportHash(imported)
       return
     }
     const sharedPayload = consumeShareHash()
@@ -307,6 +311,36 @@
     // Belt and braces: never let a stray event stomp an in-flight share decode.
     if (shareDecodePending) return
     applyRoute(parseRoute(location.hash))
+  }
+
+  // The bookmarklet's hash: a recipe when the page had markup; the page's text
+  // when it had none, read the same way a fetched page without markup is and
+  // landed in the editor; otherwise say so. This used to fall through to a
+  // silent home page, which read as the bookmarklet doing nothing.
+  async function handleImportHash(imported: ImportResult) {
+    if (imported.kind === 'recipe') {
+      await showImportedRecipe(imported.recipe)
+      return
+    }
+    if (imported.kind === 'text') {
+      const { rescueFromText } = await import('./lib/rescue')
+      const rescued = rescueFromText(imported.text, imported.title, imported.image)
+      if (rescued) {
+        const existing = await findBySource(imported.url)
+        if (existing) {
+          recipe = existing.recipe
+          savedId = existing.id
+          navigate({ view: 'recipe', id: savedId })
+        } else {
+          reportParseIssue(imported.url, 'text-rescued')
+          goAdd(rescued.text, { url: imported.url, image: rescued.image })
+        }
+        return
+      }
+    }
+    await applyRoute(parseRoute(location.hash))
+    blocked = false
+    errorMsg = 'The bookmarklet found no recipe on that page: no recipe markup, and no ingredients list in its text. You can still type it in or paste the text yourself.'
   }
 
   // A recipe handed over by the bookmarklet (#import=) or a shared link (#recipe=).
@@ -501,6 +535,27 @@
       // Structured recipe first; YouTube watch pages may fall back to description text.
       const parsed = await parseImportedHtml(html, sourceUrl)
       if (!parsed) {
+        // No recipe markup. The recipe is often still there as plain text (a
+        // table, a list, lines split by <br>), so read it that way and land in
+        // the editor, where the cook checks it before saving: a heuristic read
+        // never gets to pose as a clean card. Lazy: only a failed import pays
+        // for the rescue code.
+        const { rescueFromHtml } = await import('./lib/rescue')
+        const rescued = rescueFromHtml(html)
+        if (rescued) {
+          const existing = await findBySource(target)
+          if (existing) {
+            // Rescued and saved once already: show that copy, not a second one.
+            recipe = existing.recipe
+            savedId = existing.id
+            navigate({ view: 'recipe', id: savedId })
+          } else {
+            reportParseIssue(target, 'text-rescued')
+            goAdd(rescued.text, { url: target, image: rescued.image })
+          }
+          url = ''
+          return
+        }
         blocked = true
         // Fetched fine but no recipe found. Two very different stories, told
         // apart so the failure tally triages itself: a page with recipe
@@ -789,14 +844,21 @@
       <PantryView onopen={openSaved} onback={goBack} />
     {/await}
   {:else if view === 'add'}
-    <ManualEntry
-      oncreate={handleCreate}
-      onback={goBack}
-      initialText={pendingPhotoText}
-      editing={editingId !== null ? recipe : null}
-    />
+    {#await import('./lib/components/ManualEntry.svelte') then M}
+      {@const ManualEntry = M.default}
+      <ManualEntry
+        oncreate={handleCreate}
+        onback={goBack}
+        initialText={pendingPhotoText}
+        initialSource={pendingSource}
+        editing={editingId !== null ? recipe : null}
+      />
+    {/await}
   {:else if view === 'import'}
-    <ImportHelp onback={goBack} ontypein={() => goAdd()} />
+    {#await import('./lib/components/ImportHelp.svelte') then M}
+      {@const ImportHelp = M.default}
+      <ImportHelp onback={goBack} ontypein={() => goAdd()} />
+    {/await}
   {:else if view === 'about'}
     {#await import('./lib/components/AboutView.svelte') then M}
       {@const AboutView = M.default}
