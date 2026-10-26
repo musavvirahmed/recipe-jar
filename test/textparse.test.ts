@@ -155,6 +155,7 @@ describe('parseRecipeText — header-driven', () => {
     const r = parseRecipeText(text)
     expect(r.steps.split('\n')).toEqual(['Cook the meat.'])
     expect(r.steps).not.toMatch(/Enjoy/i)
+  })
 
   // A WordPress recipe table: an "Ingredients:" cell, then numbered steps in
   // the next cell with no "Method" heading between them (veganbangla.com).
